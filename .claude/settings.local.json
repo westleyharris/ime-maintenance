@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm create:*)",
+      "Bash(npx --yes create-vite@latest temp-scaffold --template react-ts)",
+      "Bash(cp -r temp-scaffold/* .)",
+      "Bash(cp temp-scaffold/.gitignore .)",
+      "Bash(rm -rf temp-scaffold)",
+      "Bash(npm install:*)",
+      "Bash(npx vite:*)",
+      "Bash(npx tsc:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Read(//Users/westleyharris/Library/Application Support/Claude/local-agent-mode-sessions/skills-plugin/982708db-184e-4906-8017-7a7ba1e44247/d27302f6-7a6e-4b79-84ff-9d2c6a34fb70/skills/xlsx/**)",
+      "Bash(python3 -)"
+    ]
+  }
+}
