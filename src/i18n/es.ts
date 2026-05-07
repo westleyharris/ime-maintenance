@@ -53,7 +53,7 @@ const es = {
       system: 'Sistema',
       equipment: 'Equipo',
       component: 'Componente',
-      importSurvey: 'Importar Encuesta',
+      importAssetTree: 'Importar Árbol de Activos',
     },
     workOrders: {
       title: 'Órdenes de Trabajo',

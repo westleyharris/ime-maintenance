@@ -2,7 +2,7 @@ import { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   ChevronDown, ChevronRight, Plus, QrCode, Search,
-  Building2, Factory, Settings2, Wrench, Upload, Cpu, Trash2, Loader2,
+  Building2, Factory, Settings2, Wrench, Upload, Cpu, Loader2,
 } from 'lucide-react';
 import { assets, companies, countAssetsByType, type AssetNode } from '../data/mockData';
 import { useAssets } from '../context/AssetContext';
@@ -94,7 +94,7 @@ export default function Assets() {
   const [importError, setImportError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const { importedAssets, addImportedAsset, removeImportedAsset } = useAssets();
+  const { importedAssets, addImportedAsset } = useAssets();
 
   // Combine mock assets + imported assets filtered by company
   const baseAssets = assets.filter((a) => a.companyId === selectedCompany);
@@ -150,14 +150,14 @@ export default function Assets() {
             onChange={handleFileChange}
           />
 
-          {/* Import Survey button */}
+          {/* Import Asset Tree button */}
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={importing}
             className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-primary text-primary text-sm font-medium hover:bg-blue-50 transition-colors disabled:opacity-60"
           >
             {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-            {importing ? 'Importing…' : t('assets.importSurvey', { defaultValue: 'Import Survey' })}
+            {importing ? 'Importing…' : t('assets.importAssetTree', { defaultValue: 'Import Asset Tree' })}
           </button>
 
           <button className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-card-border bg-white text-sm font-medium text-gray-700 hover:bg-gray-50">
@@ -178,28 +178,6 @@ export default function Assets() {
         </div>
       )}
 
-      {/* Imported surveys list */}
-      {importedForCompany.length > 0 && (
-        <div className="mb-4 flex flex-wrap gap-2">
-          {importedForCompany.map((node) => (
-            <div
-              key={node.id}
-              className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 font-medium"
-            >
-              <Building2 size={13} />
-              {node.name}
-              {node.children?.[0] && ` — ${node.children[0].name}`}
-              <button
-                onClick={() => removeImportedAsset(node.id)}
-                className="ml-1 text-blue-400 hover:text-red-500 transition-colors"
-                title="Remove imported survey"
-              >
-                <Trash2 size={13} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
 
       <div className="bg-card-bg rounded-xl border border-card-border">
         <div className="flex items-center justify-between p-5 pb-0">

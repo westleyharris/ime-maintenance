@@ -57,7 +57,7 @@ const en = {
       system: 'System',
       equipment: 'Equipment',
       component: 'Component',
-      importSurvey: 'Import Survey',
+      importAssetTree: 'Import Asset Tree',
     },
     // Work Orders
     workOrders: {
