@@ -1,7 +1,15 @@
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../context/AuthContext';
+
+const roleBadge: Record<string, string> = {
+  ime_admin:     'IME Admin',
+  company_admin: 'Company Admin',
+  plant_manager: 'Plant Manager',
+};
 
 export default function SettingsPage() {
   const { t, i18n } = useTranslation();
+  const { profile } = useAuth();
 
   const setLanguage = (lang: string) => {
     i18n.changeLanguage(lang);
@@ -19,15 +27,17 @@ export default function SettingsPage() {
           <div className="space-y-3">
             <div>
               <p className="text-xs text-gray-400">{t('settings.name')}</p>
-              <p className="text-sm font-medium text-gray-900">IME Admin</p>
+              <p className="text-sm font-medium text-gray-900">{profile?.full_name || '—'}</p>
             </div>
             <div>
               <p className="text-xs text-gray-400">{t('settings.email')}</p>
-              <p className="text-sm font-medium text-gray-900">admin@ime-us.com</p>
+              <p className="text-sm font-medium text-gray-900">{profile?.email || '—'}</p>
             </div>
             <div>
               <p className="text-xs text-gray-400">{t('settings.role')}</p>
-              <p className="text-sm font-medium text-gray-900">ime_admin</p>
+              <p className="text-sm font-medium text-gray-900">
+                {profile ? (roleBadge[profile.role] ?? profile.role) : '—'}
+              </p>
             </div>
           </div>
         </div>
@@ -55,43 +65,6 @@ export default function SettingsPage() {
               }`}
             >
               {t('settings.spanish')}
-            </button>
-          </div>
-        </div>
-
-        {/* Change Password */}
-        <div className="bg-card-bg rounded-xl border border-card-border p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('settings.changePassword')}</h2>
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                {t('settings.currentPassword')}
-              </label>
-              <input
-                type="password"
-                className="w-full px-3 py-2 rounded-lg border border-card-border text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                {t('settings.newPassword')}
-              </label>
-              <input
-                type="password"
-                className="w-full px-3 py-2 rounded-lg border border-card-border text-sm"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                {t('settings.confirmPassword')}
-              </label>
-              <input
-                type="password"
-                className="w-full px-3 py-2 rounded-lg border border-card-border text-sm"
-              />
-            </div>
-            <button className="px-5 py-2.5 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-light">
-              {t('settings.updatePassword')}
             </button>
           </div>
         </div>

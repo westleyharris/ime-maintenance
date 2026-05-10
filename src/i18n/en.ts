@@ -12,7 +12,7 @@ const en = {
       inspections: 'Inspections',
       pmCalendar: 'PM Calendar',
       reports: 'Reports',
-      vibration: 'Vibration',
+      ultrasound: 'Ultrasound',
       adminPanel: 'Admin Panel',
       settings: 'Settings',
     },

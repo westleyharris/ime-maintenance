@@ -3,22 +3,27 @@ import type { AssetNode } from '../data/mockData';
 
 const SKIP_SHEETS = new Set(['COVER', 'Template', 'SITE SPECIFIC LUBRICANTS', 'TABLES']);
 
-// Col indices (0-based) in each data sheet
-const COL_FUNCTIONAL_LOCATION = 3; // Machine / Functional Location
-const COL_SUB_SYSTEM = 5;          // Component / Sub System
-const DATA_START_ROW = 30;         // 0-based index (row 31 in Excel)
+const COL_FUNCTIONAL_LOCATION = 3;
+const COL_SUB_SYSTEM = 5;
+const DATA_START_ROW = 30; // 0-based (row 31 in Excel)
 
 function slug(str: string): string {
   return str.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
-function parseFilename(filename: string): { site: string; line: string } {
-  const base = filename.replace(/\.[^.]+$/, '').trim(); // strip extension
-  const parts = base.split(/\s+/);
-  if (parts.length >= 2) {
-    return { site: parts[0], line: parts.slice(1).join(' ') };
+// Strip the location name prefix from the filename to get just the line name.
+// "Niles L2.xlsx" + locationName "Niles" → "L2"
+function extractLineName(filename: string, locationName: string): string {
+  const base = filename.replace(/\.[^.]+$/, '').trim();
+  const prefix = locationName.trim().toLowerCase();
+  const baseLower = base.toLowerCase();
+  if (prefix && baseLower.startsWith(prefix)) {
+    const remainder = base.slice(locationName.trim().length).trim();
+    if (remainder) return remainder;
   }
-  return { site: base, line: 'L1' };
+  // Fallback: everything after the first word
+  const parts = base.split(/\s+/);
+  return parts.length >= 2 ? parts.slice(1).join(' ') : base;
 }
 
 function cellText(row: unknown[], colIdx: number): string {
@@ -31,8 +36,10 @@ export function parseExcelToAssetTree(
   arrayBuffer: ArrayBuffer,
   filename: string,
   companyId: string,
+  locationId: string,
+  locationName: string,
 ): AssetNode {
-  const { site, line } = parseFilename(filename);
+  const lineName = extractLineName(filename, locationName);
   const wb = XLSX.read(arrayBuffer, { type: 'array' });
 
   const sectionNodes: AssetNode[] = [];
@@ -43,72 +50,70 @@ export function parseExcelToAssetTree(
     const ws = wb.Sheets[sheetName];
     const rows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
-    // Collect machines → components mapping
     const machineMap = new Map<string, Set<string>>();
 
     for (let i = DATA_START_ROW; i < rows.length; i++) {
       const row = rows[i];
       if (!row || row.length === 0) continue;
-
       const machine = cellText(row, COL_FUNCTIONAL_LOCATION);
       const component = cellText(row, COL_SUB_SYSTEM);
-
-      if (!machine) continue; // skip blank rows
-
+      if (!machine) continue;
       if (!machineMap.has(machine)) machineMap.set(machine, new Set());
       if (component) machineMap.get(machine)!.add(component);
     }
 
-    if (machineMap.size === 0) continue; // nothing useful on this sheet
+    if (machineMap.size === 0) continue;
 
     const machineNodes: AssetNode[] = [];
     machineMap.forEach((components, machineName) => {
-      const machineId = `${slug(site)}-${slug(line)}-${slug(sheetName)}-${slug(machineName)}`;
-      const componentNodes: AssetNode[] = Array.from(components).map((compName) => ({
+      const machineId = `${slug(locationName)}-${slug(lineName)}-${slug(sheetName)}-${slug(machineName)}`;
+      const componentNodes: AssetNode[] = Array.from(components).map(compName => ({
         id: `${machineId}-${slug(compName)}`,
         name: compName,
         type: 'component' as const,
         status: 'good' as const,
         companyId,
+        locationId,
       }));
-
       machineNodes.push({
         id: machineId,
         name: machineName,
         type: 'equipment',
         status: 'good',
         companyId,
+        locationId,
         children: componentNodes.length > 0 ? componentNodes : undefined,
       });
     });
 
     sectionNodes.push({
-      id: `${slug(site)}-${slug(line)}-${slug(sheetName)}`,
+      id: `${slug(locationName)}-${slug(lineName)}-${slug(sheetName)}`,
       name: sheetName,
       type: 'system',
       status: 'good',
       companyId,
+      locationId,
       children: machineNodes,
     });
   }
 
   const lineNode: AssetNode = {
-    id: `${slug(site)}-${slug(line)}`,
-    name: line,
+    id: `${slug(locationName)}-${slug(lineName)}`,
+    name: lineName,
     type: 'plant',
     status: 'good',
     companyId,
+    locationId,
     children: sectionNodes,
   };
 
-  const siteNode: AssetNode = {
-    id: slug(site),
-    name: site,
+  return {
+    id: `${slug(locationName)}`,
+    name: locationName,
     type: 'site',
     status: 'good',
     companyId,
+    locationId,
     children: [lineNode],
   };
-
-  return siteNode;
 }

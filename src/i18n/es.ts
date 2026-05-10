@@ -11,7 +11,7 @@ const es = {
       inspections: 'Inspecciones',
       pmCalendar: 'Calendario PM',
       reports: 'Reportes',
-      vibration: 'Vibración',
+      ultrasound: 'Ultrasonido',
       adminPanel: 'Panel Admin',
       settings: 'Configuración',
     },

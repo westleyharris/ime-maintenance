@@ -20,6 +20,7 @@ export interface AssetNode {
   type: 'site' | 'plant' | 'system' | 'equipment' | 'component';
   status: 'good' | 'warning' | 'critical';
   companyId: string;
+  locationId?: string;
   children?: AssetNode[];
 }
 
