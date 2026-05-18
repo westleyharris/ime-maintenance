@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
 import { importUASHierarchy, type HierarchyResult } from '../utils/uasImporter';
 import type { AssetNode } from '../data/mockData';
+import EquipmentDetail from '../components/EquipmentDetail';
 
 // ── Icons / colors ────────────────────────────────────────────────────────────
 
@@ -38,28 +39,41 @@ const typeBadgeColors: Record<string, string> = {
 
 // ── Tree node component ───────────────────────────────────────────────────────
 
-function AssetTreeNode({ node, depth = 0 }: { node: AssetNode; depth?: number }) {
+function AssetTreeNode({
+  node, depth = 0, onSelectEquipment,
+}: {
+  node: AssetNode;
+  depth?: number;
+  onSelectEquipment: (id: string, tag: string) => void;
+}) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(depth < 2);
   const hasChildren = node.children && node.children.length > 0;
   const Icon = typeIcons[node.type] || Building2;
   const typeLabel = t(`assets.${node.type}`, { defaultValue: node.type });
+  const isEquipment = node.type === 'equipment';
 
   return (
     <div>
       <div
-        className="flex items-center py-2.5 px-2 hover:bg-gray-50 rounded-lg group cursor-pointer"
+        className={`flex items-center py-2.5 px-2 rounded-lg group ${isEquipment ? 'hover:bg-blue-50 cursor-pointer' : 'hover:bg-gray-50 cursor-default'}`}
         style={{ paddingLeft: `${depth * 24 + 8}px` }}
+        onClick={isEquipment ? () => onSelectEquipment(node.id, node.name) : undefined}
       >
         {hasChildren ? (
-          <button onClick={() => setExpanded(!expanded)} className="mr-1 text-gray-400 hover:text-gray-600">
+          <button
+            onClick={e => { e.stopPropagation(); setExpanded(!expanded); }}
+            className="mr-1 text-gray-400 hover:text-gray-600"
+          >
             {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           </button>
         ) : (
           <span className="w-5 mr-1" />
         )}
         <Icon size={16} className={`mr-2 shrink-0 ${typeColors[node.type]}`} />
-        <span className="text-sm font-medium text-gray-800 flex-1 truncate">{node.name}</span>
+        <span className={`text-sm font-medium flex-1 truncate ${isEquipment ? 'text-primary group-hover:underline' : 'text-gray-800'}`}>
+          {node.name}
+        </span>
         <span className={`text-xs px-2.5 py-0.5 rounded border font-medium mr-3 shrink-0 ${typeBadgeColors[node.type] ?? 'bg-gray-50 text-gray-700 border-gray-200'}`}>
           {typeLabel}
         </span>
@@ -67,7 +81,7 @@ function AssetTreeNode({ node, depth = 0 }: { node: AssetNode; depth?: number })
       {hasChildren && expanded && (
         <div>
           {node.children!.map(child => (
-            <AssetTreeNode key={child.id} node={child} depth={depth + 1} />
+            <AssetTreeNode key={child.id} node={child} depth={depth + 1} onSelectEquipment={onSelectEquipment} />
           ))}
         </div>
       )}
@@ -152,6 +166,7 @@ export default function Assets() {
   const [searchTerm, setSearchTerm] = useState('');
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState<HierarchyResult | null>(null);
+  const [selectedEquipment, setSelectedEquipment] = useState<{ id: string; tag: string } | null>(null);
 
   const selectedLocation = locations.find(l => l.id === selectedLocationId);
 
@@ -235,6 +250,17 @@ export default function Assets() {
   const displayTree = searchTerm && tree
     ? filterTree(tree, searchTerm.toLowerCase())
     : tree;
+
+  // ── Equipment detail view ────────────────────────────────────────────────
+  if (selectedEquipment) {
+    return (
+      <EquipmentDetail
+        equipmentId={selectedEquipment.id}
+        equipmentTag={selectedEquipment.tag}
+        onBack={() => setSelectedEquipment(null)}
+      />
+    );
+  }
 
   return (
     <div>
@@ -340,7 +366,10 @@ export default function Assets() {
               <p className="text-xs mt-1">Import a UAS Export file to build the asset tree</p>
             </div>
           ) : (
-            <AssetTreeNode node={displayTree} />
+            <AssetTreeNode
+              node={displayTree}
+              onSelectEquipment={(id, tag) => setSelectedEquipment({ id, tag })}
+            />
           )}
         </div>
       </div>
