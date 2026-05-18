@@ -441,7 +441,7 @@ export default function Ultrasound() {
       ) : (
         <>
           {/* Status bar */}
-          <div className="grid grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(level => {
               const cfg = A(level);
               return (
@@ -468,7 +468,7 @@ export default function Ultrasound() {
                 <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wide">Needs Attention</h2>
                 <span className="text-xs text-gray-400">— highest severity equipment</span>
               </div>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                 {criticalGroups.map(g => {
                   const cfg = A(g.worstAlarm);
                   const barPct = Math.round((g.worstRms / maxRms) * 100);
@@ -536,7 +536,7 @@ export default function Ultrasound() {
                       const barPct = r.overallRms != null ? Math.round((r.overallRms / maxRms) * 100) : 0;
                       return (
                         <div key={r.id}
-                          className="flex items-center gap-4 px-4 py-2.5 bg-white hover:bg-blue-50/40 cursor-pointer transition-colors"
+                          className="flex items-center gap-2 md:gap-4 px-3 md:px-4 py-2.5 bg-white hover:bg-blue-50/40 cursor-pointer transition-colors"
                           onClick={() => setSelectedPoint({ id: r.measurementPointId, name: r.point, equipmentTag: g.tag })}>
                           {/* Point name */}
                           <div className="w-48 shrink-0">

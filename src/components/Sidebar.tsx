@@ -12,7 +12,7 @@ export default function Sidebar() {
   const isImeAdmin = profile?.role === 'ime_admin';
 
   return (
-    <aside className="w-[260px] bg-sidebar flex flex-col justify-between shrink-0">
+    <aside className="hidden md:flex w-[260px] bg-sidebar flex-col justify-between shrink-0">
       <nav className="px-3 pt-3">
         {/* Main */}
         <div className="mb-1">

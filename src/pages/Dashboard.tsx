@@ -68,7 +68,7 @@ function AlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; ro
       ) : (
         <>
           {/* Column headers */}
-          <div className="grid grid-cols-3 gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100">
+          <div className="hidden sm:grid grid-cols-3 gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100">
             {['Line', 'Equipment Tag', 'Point'].map(h => (
               <span key={h} className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{h}</span>
             ))}
@@ -77,10 +77,19 @@ function AlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; ro
           {/* Rows */}
           <div className="divide-y divide-gray-50 bg-white">
             {visible.map((r, i) => (
-              <div key={i} className={`grid grid-cols-3 gap-3 px-4 py-2.5 text-xs ${t.row} transition-colors`}>
-                <span className="text-gray-600 truncate">{r.line}</span>
-                <span className="font-mono text-gray-800 font-medium truncate">{r.equipmentTag}</span>
-                <span className="text-gray-500">{r.point}</span>
+              <div key={i} className={`px-4 py-2.5 text-xs ${t.row} transition-colors`}>
+                <div className="sm:hidden flex items-start justify-between gap-2">
+                  <div>
+                    <p className="font-mono font-medium text-gray-800">{r.equipmentTag}</p>
+                    <p className="text-gray-500 mt-0.5">{r.point}</p>
+                    <p className="text-gray-400 mt-0.5">{r.line}</p>
+                  </div>
+                </div>
+                <div className="hidden sm:grid grid-cols-3 gap-3">
+                  <span className="text-gray-600 truncate">{r.line}</span>
+                  <span className="font-mono text-gray-800 font-medium truncate">{r.equipmentTag}</span>
+                  <span className="text-gray-500">{r.point}</span>
+                </div>
               </div>
             ))}
           </div>
@@ -294,14 +303,14 @@ export default function Dashboard() {
       {!noScope && !loading && (
         <>
           {/* Alarm panels + pie */}
-          <div className="grid grid-cols-5 gap-4 items-start">
-            <div className="col-span-3 space-y-3">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+            <div className="lg:col-span-3 space-y-3">
               <AlarmPanel level="Danger"  rows={byLevel.Danger}  />
               <AlarmPanel level="Warning" rows={byLevel.Warning} />
               <AlarmPanel level="Alert"   rows={byLevel.Alert}   />
             </div>
 
-            <div className="col-span-2 bg-white rounded-xl border border-gray-200 p-5 sticky top-4">
+            <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5 lg:sticky lg:top-4">
               <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
               <p className="text-xs text-gray-400 mt-0.5 mb-4">{rows.length} measurement points</p>
               {pieData.length === 0 ? (

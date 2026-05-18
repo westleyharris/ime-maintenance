@@ -151,23 +151,24 @@ export default function Reports() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Reports</h1>
-          <p className="text-sm text-gray-500 mt-0.5">Measurement data export and summary</p>
+          <h1 className="text-xl md:text-2xl font-bold text-gray-900">Reports</h1>
+          <p className="text-sm text-gray-500 mt-0.5 hidden sm:block">Measurement data export and summary</p>
         </div>
         <button
           onClick={exportCSV}
           disabled={displayed.length === 0}
-          className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary-light disabled:opacity-40 transition-colors"
+          className="flex items-center gap-2 px-3 md:px-4 py-2 rounded-xl bg-primary text-white text-sm font-semibold hover:bg-primary-light disabled:opacity-40 transition-colors shrink-0"
         >
           <Download size={15} />
-          Export CSV
+          <span className="hidden sm:inline">Export CSV</span>
+          <span className="sm:hidden">Export</span>
         </button>
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {ALARM_ORDER.map(lvl => {
           const cfg = ALARM_CONFIG[lvl];
           return (
