@@ -45,25 +45,6 @@ function formatDate(iso: string): string {
   return `${m}/${d}/${y}`;
 }
 
-// ── Stat card ─────────────────────────────────────────────────────────────────
-
-function StatCard({ level, count, total }: { level: keyof typeof ALARM; count: number; total: number }) {
-  const t = ALARM[level];
-  const pct = total > 0 ? Math.round((count / total) * 100) : 0;
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-4 flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <span className={`w-2.5 h-2.5 rounded-full ${t.dot}`} />
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{level}</span>
-      </div>
-      <p className="text-3xl font-bold text-gray-900">{count}</p>
-      <div className="w-full bg-gray-100 rounded-full h-1.5">
-        <div className="h-1.5 rounded-full transition-all" style={{ width: `${pct}%`, backgroundColor: t.color }} />
-      </div>
-      <p className="text-xs text-gray-400">{pct}% of all points</p>
-    </div>
-  );
-}
 
 // ── Alarm panel ───────────────────────────────────────────────────────────────
 
@@ -231,16 +212,6 @@ export default function Dashboard() {
     .map(l => ({ name: l, value: byLevel[l].length, color: ALARM[l].color }))
     .filter(d => d.value > 0);
 
-  const lineBarData = (() => {
-    const map = new Map<string, { line: string; Danger: number; Warning: number; Alert: number }>();
-    rows.filter(r => r.alarmLevel !== 'Normal').forEach(r => {
-      if (!map.has(r.line)) map.set(r.line, { line: r.line, Danger: 0, Warning: 0, Alert: 0 });
-      const e = map.get(r.line)!;
-      if (r.alarmLevel in e) (e as Record<string, number>)[r.alarmLevel]++;
-    });
-    return [...map.values()].sort((a, b) => (b.Danger + b.Warning + b.Alert) - (a.Danger + a.Warning + a.Alert));
-  })();
-
   const noScope = !selectedCompanyId;
 
   return (
@@ -342,7 +313,7 @@ export default function Dashboard() {
                       {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
                     </Pie>
                     <Tooltip
-                      formatter={(v: number, n: string) => [`${v} points`, n]}
+                      formatter={(v) => [`${v} points`]}
                       contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
                     />
                     <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />

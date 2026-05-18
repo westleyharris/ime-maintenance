@@ -159,7 +159,7 @@ export default function Admin() {
     if (error) { setUserError(error.message); setSavingUser(false); return; }
 
     // Sync JWT app_metadata so scope changes take effect on next login
-    await supabase.rpc('sync_user_metadata', { user_id: editingUserId }).catch(() => {});
+    try { await supabase.rpc('sync_user_metadata', { user_id: editingUserId }); } catch { /* best-effort */ }
 
     setUsers(prev => prev.map(u => u.id === editingUserId ? { ...u, ...updates } as UserRow : u));
     setEditingUserId(null);

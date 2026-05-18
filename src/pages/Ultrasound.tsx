@@ -1,12 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, Activity, X, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../context/AuthContext';
 import { useScope } from '../context/ScopeContext';
 import { importUASData, type ImportResult } from '../utils/uasImporter';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine, Legend,
+  ResponsiveContainer, ReferenceLine,
 } from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -249,7 +248,7 @@ function TrendModal({ point, equipmentTag, onClose }: {
                   tickFormatter={v => v.toFixed(2)} />
                 <Tooltip
                   contentStyle={{ fontSize: 12, borderRadius: 10, border: '1px solid #e5e7eb', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}
-                  formatter={(v: number) => [v.toFixed(3), cfg.label]}
+                  formatter={(v) => [Number(v).toFixed(3), cfg.label]}
                   labelFormatter={(_: unknown, payload) => {
                     if (!payload?.length) return '';
                     const d = payload[0].payload as TrendEntry;
@@ -286,7 +285,6 @@ function TrendModal({ point, equipmentTag, onClose }: {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Ultrasound() {
-  const { profile } = useAuth();
   const { selectedCompanyId, selectedLocationId } = useScope();
   const fileInputRef = useRef<HTMLInputElement>(null);
 

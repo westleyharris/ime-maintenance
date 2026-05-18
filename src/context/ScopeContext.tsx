@@ -39,8 +39,8 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
       if (isImeAdmin) {
         const { data } = await supabase.from('companies').select('id, name').order('name');
         setCompanies(data ?? []);
-      } else if (profile.company_id) {
-        const { data } = await supabase.from('companies').select('id, name').eq('id', profile.company_id).single();
+      } else if (profile?.company_id) {
+        const { data } = await supabase.from('companies').select('id, name').eq('id', profile!.company_id).single();
         if (data) {
           setCompanies([data]);
           setSelectedCompanyId(data.id);
