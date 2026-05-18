@@ -276,17 +276,16 @@ export async function importUASData(
     }];
   });
 
+  // Deduplicate on (point + date) so re-importing the same file is idempotent
   const measDeduped = [
     ...new Map(
-      [...allMeas]
-        .sort((a, b) => b.measured_at.localeCompare(a.measured_at))
-        .map(m => [m.measurement_point_id, m]),
+      allMeas.map(m => [`${m.measurement_point_id}|${m.measured_at}`, m]),
     ).values(),
   ];
 
   const { data: measData, error: measErr } = await supabase
     .from('measurements')
-    .upsert(measDeduped, { onConflict: 'measurement_point_id' })
+    .upsert(measDeduped, { onConflict: 'measurement_point_id,measured_at' })
     .select('id');
   if (measErr) {
     return { ...hierResult, measurements: 0, errors: [`Measurements: ${measErr.message}`] };

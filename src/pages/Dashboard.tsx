@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
 import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -128,9 +128,48 @@ function AlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; ro
 export default function Dashboard() {
   const { selectedCompanyId, selectedLocationId } = useScope();
 
-  const [rows, setRows] = useState<FlatAlarm[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [rows, setRows]               = useState<FlatAlarm[]>([]);
+  const [loading, setLoading]         = useState(false);
   const [lastReading, setLastReading] = useState<string | null>(null);
+  const [nextVisit, setNextVisit]     = useState<string | null>(null);
+  const [showPicker, setShowPicker]   = useState(false);
+  const [savingVisit, setSavingVisit] = useState(false);
+  const pickerRef                     = useRef<HTMLDivElement>(null);
+
+  // Close picker on outside click
+  useEffect(() => {
+    if (!showPicker) return;
+    const handler = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showPicker]);
+
+  // Fetch next visit date for selected location
+  useEffect(() => {
+    if (!selectedLocationId) { setNextVisit(null); return; }
+    supabase
+      .from('locations')
+      .select('next_visit_date')
+      .eq('id', selectedLocationId)
+      .single()
+      .then(({ data }) => setNextVisit(data?.next_visit_date ?? null));
+  }, [selectedLocationId]);
+
+  const handleSetNextVisit = async (date: string | null) => {
+    setShowPicker(false);
+    if (!selectedLocationId) return;
+    setSavingVisit(true);
+    await supabase
+      .from('locations')
+      .update({ next_visit_date: date })
+      .eq('id', selectedLocationId);
+    setNextVisit(date);
+    setSavingVisit(false);
+  };
 
   const fetchData = useCallback(async () => {
     if (!selectedCompanyId) { setRows([]); setLastReading(null); return; }
@@ -224,12 +263,45 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="h-8 w-px bg-gray-100" />
-        <div className="text-right flex items-center gap-3">
-          <div>
+        <div className="relative flex items-center gap-3" ref={pickerRef}>
+          <div className="text-right">
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Next Planned Visit</p>
-            <p className="text-sm font-medium text-gray-400">Not scheduled</p>
+            {savingVisit
+              ? <p className="text-sm text-gray-400">Saving…</p>
+              : nextVisit
+                ? <p className="text-sm font-bold text-primary">{formatDate(nextVisit)}</p>
+                : <p className="text-sm font-medium text-gray-400">Not scheduled</p>
+            }
           </div>
-          <Calendar size={15} className="text-gray-300" />
+          <button
+            onClick={() => selectedLocationId && setShowPicker(p => !p)}
+            title={selectedLocationId ? 'Set next visit date' : 'Select a location first'}
+            className={`p-1.5 rounded-lg transition-colors ${selectedLocationId ? 'hover:bg-gray-100 cursor-pointer' : 'cursor-not-allowed opacity-40'} ${showPicker ? 'bg-gray-100' : ''}`}
+          >
+            <Calendar size={15} className={nextVisit ? 'text-primary' : 'text-gray-400'} />
+          </button>
+
+          {/* Date picker popover */}
+          {showPicker && (
+            <div className="absolute right-0 top-full mt-2 bg-white rounded-xl border border-gray-200 shadow-lg p-4 z-50 min-w-[220px]">
+              <p className="text-xs font-semibold text-gray-500 mb-2">Set next visit date</p>
+              <input
+                type="date"
+                defaultValue={nextVisit ?? ''}
+                onChange={e => e.target.value && handleSetNextVisit(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                autoFocus
+              />
+              {nextVisit && (
+                <button
+                  onClick={() => handleSetNextVisit(null)}
+                  className="mt-2 flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
+                >
+                  <X size={11} /> Clear date
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

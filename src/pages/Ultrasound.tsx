@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, Activity } from 'lucide-react';
+import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, Activity, X, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { useScope } from '../context/ScopeContext';
 import { importUASData, type ImportResult } from '../utils/uasImporter';
+import {
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, ReferenceLine, Legend,
+} from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -16,6 +20,7 @@ interface MeasurementRow {
   alarm_level: string;
   measured_at: string;
   measurement_points: {
+    id: string;
     name: string;
     sensor_model: string | null;
     components: {
@@ -36,6 +41,7 @@ interface MeasurementRow {
 
 interface FlatRow {
   id: string;
+  measurementPointId: string;
   location: string;
   line: string;
   section: string;
@@ -67,6 +73,7 @@ function flatten(m: MeasurementRow): FlatRow {
   const sec = eq.sections;
   return {
     id: m.id,
+    measurementPointId: mp.id,
     location: sec.lines.locations.name,
     line: sec.lines.name,
     section: sec.uas_name,
@@ -116,6 +123,166 @@ function groupByEquipment(rows: FlatRow[]): EquipmentGroup[] {
   return Array.from(map.values()).sort((a, b) => ALARM_RANK[b.worstAlarm] - ALARM_RANK[a.worstAlarm] || a.tag.localeCompare(b.tag));
 }
 
+// ── Trend modal ───────────────────────────────────────────────────────────────
+
+type Metric = 'overallRms' | 'maxRms' | 'peak' | 'crestFactor';
+
+interface TrendEntry {
+  date: string;
+  fullDate: string;
+  overallRms: number | null;
+  maxRms: number | null;
+  peak: number | null;
+  crestFactor: number | null;
+  alarmLevel: string;
+}
+
+const METRIC_OPTIONS: { key: Metric; label: string; color: string }[] = [
+  { key: 'overallRms',   label: 'Overall RMS',  color: '#3b82f6' },
+  { key: 'maxRms',       label: 'Max RMS',       color: '#8b5cf6' },
+  { key: 'peak',         label: 'Peak',          color: '#f97316' },
+  { key: 'crestFactor',  label: 'Crest Factor',  color: '#06b6d4' },
+];
+
+const ALARM_DOT: Record<string, string> = {
+  Danger: '#ef4444', Warning: '#f97316', Alert: '#eab308', Normal: '#22c55e',
+};
+
+function CustomDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: TrendEntry }) {
+  if (cx == null || cy == null || !payload) return null;
+  return (
+    <circle cx={cx} cy={cy} r={4}
+      fill={ALARM_DOT[payload.alarmLevel] ?? '#22c55e'}
+      stroke="white" strokeWidth={1.5} />
+  );
+}
+
+function TrendModal({ point, equipmentTag, onClose }: {
+  point: { id: string; name: string };
+  equipmentTag: string;
+  onClose: () => void;
+}) {
+  const [data, setData]       = useState<TrendEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [metric, setMetric]   = useState<Metric>('overallRms');
+
+  useEffect(() => {
+    supabase
+      .from('measurements')
+      .select('overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at')
+      .eq('measurement_point_id', point.id)
+      .order('measured_at', { ascending: true })
+      .then(({ data: rows }) => {
+        setData((rows ?? []).map(m => ({
+          date:       new Date(m.measured_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }),
+          fullDate:   m.measured_at,
+          overallRms: m.overall_rms,
+          maxRms:     m.max_rms,
+          peak:       m.peak,
+          crestFactor: m.crest_factor,
+          alarmLevel: m.alarm_level,
+        })));
+        setLoading(false);
+      });
+  }, [point.id]);
+
+  const cfg = METRIC_OPTIONS.find(m => m.key === metric)!;
+  const hasEnough = data.length >= 2;
+
+  const latest = data[data.length - 1];
+  const prev   = data[data.length - 2];
+  const delta  = latest && prev && latest[metric] != null && prev[metric] != null
+    ? (latest[metric] as number) - (prev[metric] as number)
+    : null;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{equipmentTag}</p>
+            <h2 className="text-base font-bold text-gray-900 mt-0.5">{point.name}</h2>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-400">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-5">
+          {/* Metric selector */}
+          <div className="flex items-center gap-2 flex-wrap">
+            {METRIC_OPTIONS.map(m => (
+              <button key={m.key} onClick={() => setMetric(m.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${
+                  metric === m.key ? 'text-white shadow-sm' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                }`}
+                style={metric === m.key ? { backgroundColor: m.color } : undefined}>
+                {m.label}
+              </button>
+            ))}
+            {delta != null && (
+              <span className={`ml-auto text-xs font-semibold ${delta > 0 ? 'text-red-500' : 'text-green-600'}`}>
+                {delta > 0 ? '▲' : '▼'} {Math.abs(delta).toFixed(3)} vs prev
+              </span>
+            )}
+          </div>
+
+          {/* Chart */}
+          {loading ? (
+            <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-gray-300" /></div>
+          ) : !hasEnough ? (
+            <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+              <TrendingUp size={36} className="mb-3 opacity-30" />
+              <p className="text-sm font-medium">Not enough data for a trend</p>
+              <p className="text-xs mt-1 text-gray-300">
+                {data.length === 0 ? 'No measurements found' : 'Need at least 2 measurements to plot a trend'}
+              </p>
+            </div>
+          ) : (
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+                <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={48}
+                  tickFormatter={v => v.toFixed(2)} />
+                <Tooltip
+                  contentStyle={{ fontSize: 12, borderRadius: 10, border: '1px solid #e5e7eb', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}
+                  formatter={(v: number) => [v.toFixed(3), cfg.label]}
+                  labelFormatter={(_: unknown, payload) => {
+                    if (!payload?.length) return '';
+                    const d = payload[0].payload as TrendEntry;
+                    const lvl = d.alarmLevel;
+                    return `${new Date(d.fullDate).toLocaleDateString('en-US', { dateStyle: 'medium' })} · ${lvl}`;
+                  }}
+                />
+                <ReferenceLine y={0} stroke="#e5e7eb" />
+                <Line
+                  type="monotone"
+                  dataKey={metric}
+                  stroke={cfg.color}
+                  strokeWidth={2}
+                  dot={<CustomDot />}
+                  activeDot={{ r: 6, stroke: 'white', strokeWidth: 2 }}
+                  connectNulls
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+
+          {/* Reading count */}
+          {!loading && (
+            <p className="text-xs text-gray-300 text-right">
+              {data.length} measurement{data.length !== 1 ? 's' : ''} · dots colored by alarm level
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function Ultrasound() {
@@ -131,6 +298,7 @@ export default function Ultrasound() {
   const [filterAlarm, setFilterAlarm] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [search, setSearch] = useState('');
+  const [selectedPoint, setSelectedPoint] = useState<{ id: string; name: string; equipmentTag: string } | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!selectedCompanyId) { setRows([]); setLoading(false); return; }
@@ -140,7 +308,7 @@ export default function Ultrasound() {
       .select(`
         id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at,
         measurement_points (
-          name, sensor_model,
+          id, name, sensor_model,
           components (
             name,
             equipment (
@@ -369,7 +537,9 @@ export default function Ultrasound() {
                       const pcfg = A(r.alarmLevel);
                       const barPct = r.overallRms != null ? Math.round((r.overallRms / maxRms) * 100) : 0;
                       return (
-                        <div key={r.id} className="flex items-center gap-4 px-4 py-2.5 bg-white hover:bg-gray-50/60 transition-colors">
+                        <div key={r.id}
+                          className="flex items-center gap-4 px-4 py-2.5 bg-white hover:bg-blue-50/40 cursor-pointer transition-colors"
+                          onClick={() => setSelectedPoint({ id: r.measurementPointId, name: r.point, equipmentTag: g.tag })}>
                           {/* Point name */}
                           <div className="w-48 shrink-0">
                             <p className="text-xs font-semibold text-gray-700 truncate">{r.point}</p>
@@ -399,8 +569,11 @@ export default function Ultrasound() {
                             </span>
                           </div>
 
-                          {/* Date */}
-                          <span className="text-[10px] text-gray-300 shrink-0 w-20 text-right hidden xl:block">{fmtDate(r.measuredAt)}</span>
+                          {/* Date + trend hint */}
+                          <div className="shrink-0 hidden xl:flex items-center gap-2 w-28 justify-end">
+                            <span className="text-[10px] text-gray-300">{fmtDate(r.measuredAt)}</span>
+                            <TrendingUp size={12} className="text-gray-200 group-hover:text-primary transition-colors" />
+                          </div>
                         </div>
                       );
                     })}
@@ -410,6 +583,14 @@ export default function Ultrasound() {
             })}
           </div>
         </>
+      )}
+
+      {selectedPoint && (
+        <TrendModal
+          point={{ id: selectedPoint.id, name: selectedPoint.name }}
+          equipmentTag={selectedPoint.equipmentTag}
+          onClose={() => setSelectedPoint(null)}
+        />
       )}
     </div>
   );
