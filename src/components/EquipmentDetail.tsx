@@ -818,6 +818,7 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
   const [note, setNote]         = useState('');
   const [confirming, setConfirming] = useState(false);
   const [saving, setSaving]     = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [specs, setSpecs]       = useState<NewAssetSpecs>({
     display_name:      currentInfo?.display_name ?? '',
     asset_type:        currentInfo?.asset_type ?? '',
@@ -874,26 +875,56 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
 
   async function saveNewSpecs() {
     setSaving(true);
-    let imageUrl = currentInfo?.image_url ?? null;
+    setSaveError(null);
 
+    // ── 1. Upload new image first (image_url column always exists) ────────────
+    let imageUrl = currentInfo?.image_url ?? null;
     if (newImageFile) {
       const ext  = newImageFile.name.split('.').pop() ?? 'jpg';
       const path = `${equipmentId}.${ext}`;
       const { error: uploadErr } = await supabase.storage
         .from('equipment-images')
         .upload(path, newImageFile, { upsert: true });
-      if (!uploadErr) {
+      if (uploadErr) {
+        console.error('Image upload failed:', uploadErr);
+      } else {
         imageUrl = supabase.storage.from('equipment-images').getPublicUrl(path).data.publicUrl;
       }
     }
 
-    // Only update fields that were actually filled in
-    const updates: Record<string, string | null> = { image_url: imageUrl };
+    // ── 2. Update image_url (always safe, column exists) ─────────────────────
+    if (imageUrl !== currentInfo?.image_url) {
+      const { error: imgErr } = await supabase
+        .from('equipment')
+        .update({ image_url: imageUrl })
+        .eq('id', equipmentId);
+      if (imgErr) console.error('image_url update failed:', imgErr);
+    }
+
+    // ── 3. Update extended spec fields (requires equipment_extended_fields migration) ──
+    const specUpdates: Record<string, string> = {};
     (Object.keys(specs) as (keyof NewAssetSpecs)[]).forEach(k => {
-      if (specs[k].trim()) updates[k] = specs[k].trim();
+      if (specs[k].trim()) specUpdates[k] = specs[k].trim();
     });
 
-    await supabase.from('equipment').update(updates).eq('id', equipmentId);
+    if (Object.keys(specUpdates).length > 0) {
+      const { error: specErr } = await supabase
+        .from('equipment')
+        .update(specUpdates)
+        .eq('id', equipmentId);
+
+      if (specErr) {
+        console.error('Spec update failed:', specErr);
+        // Most likely cause: extended fields migration not yet run in Supabase
+        setSaveError(
+          `Could not save asset details: ${specErr.message}. ` +
+          `Make sure you have run the "equipment_extended_fields.sql" migration in Supabase SQL Editor.`
+        );
+        setSaving(false);
+        return;
+      }
+    }
+
     setSaving(false);
     await onComplete();
   }
@@ -1046,16 +1077,24 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
           </div>
 
           {/* Footer actions */}
-          <div className="flex gap-3 p-6 border-t border-gray-100 shrink-0">
-            <button onClick={onComplete}
-              className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors">
-              Skip for now
-            </button>
-            <button onClick={saveNewSpecs} disabled={saving}
-              className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-primary text-white hover:bg-primary-light disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
-              {saving && <Loader2 size={13} className="animate-spin" />}
-              Save New Asset Details
-            </button>
+          <div className="p-6 border-t border-gray-100 shrink-0 space-y-3">
+            {saveError && (
+              <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700">
+                <p className="font-semibold mb-0.5">Save failed</p>
+                <p>{saveError}</p>
+              </div>
+            )}
+            <div className="flex gap-3">
+              <button onClick={onComplete}
+                className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors">
+                Skip for now
+              </button>
+              <button onClick={saveNewSpecs} disabled={saving}
+                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-primary text-white hover:bg-primary-light disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+                {saving && <Loader2 size={13} className="animate-spin" />}
+                Save New Asset Details
+              </button>
+            </div>
           </div>
         </div>
       )}
