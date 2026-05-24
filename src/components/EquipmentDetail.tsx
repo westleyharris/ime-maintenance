@@ -794,8 +794,6 @@ function PriorAssetCard({ note }: { note: EquipmentNote }) {
 // ── Replace Modal (2-step) ────────────────────────────────────────────────────
 
 interface NewAssetSpecs {
-  display_name: string;
-  asset_type: string;
   manufacturer: string;
   model: string;
   serial_number: string;
@@ -820,8 +818,6 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
   const [saving, setSaving]     = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [specs, setSpecs]       = useState<NewAssetSpecs>({
-    display_name:      currentInfo?.display_name ?? '',
-    asset_type:        currentInfo?.asset_type ?? '',
     manufacturer:      '',
     model:             '',
     serial_number:     '',
@@ -1028,18 +1024,6 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
 
               {/* Main fields */}
               <div className="flex-1 grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className={labelCls}>Display Name</label>
-                  <input value={specs.display_name} onChange={sp('display_name')} placeholder={currentInfo?.tag ?? ''} className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls}>Asset Type</label>
-                  <input value={specs.asset_type} onChange={sp('asset_type')} placeholder="e.g. Motor, Compressor…" className={inputCls} />
-                </div>
-                <div>
-                  <label className={labelCls}>Installation Date</label>
-                  <input type="date" value={specs.installation_date} onChange={sp('installation_date')} className={inputCls} />
-                </div>
                 <div>
                   <label className={labelCls}>Manufacturer</label>
                   <input value={specs.manufacturer} onChange={sp('manufacturer')} placeholder="e.g. ABB, Siemens…" className={inputCls} />
@@ -1051,6 +1035,10 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
                 <div className="col-span-2">
                   <label className={labelCls}>Serial Number</label>
                   <input value={specs.serial_number} onChange={sp('serial_number')} placeholder="e.g. SN-2024-XXXX" className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className={labelCls}>Installation Date</label>
+                  <input type="date" value={specs.installation_date} onChange={sp('installation_date')} className={inputCls} />
                 </div>
               </div>
             </div>
