@@ -14,6 +14,7 @@ interface MeasurementRow {
     components: {
       equipment: {
         tag: string;
+        status: string | null;
         sections: { lines: { name: string } };
       };
     };
@@ -25,6 +26,7 @@ interface FlatAlarm {
   measuredAt: string;
   line: string;
   equipmentTag: string;
+  equipmentStatus: string;
   point: string;
 }
 
@@ -173,7 +175,7 @@ export default function Dashboard() {
           name,
           components (
             equipment (
-              tag,
+              tag, status,
               sections ( lines ( name ) )
             )
           )
@@ -192,11 +194,12 @@ export default function Dashboard() {
       const flat = (data as unknown as MeasurementRow[])
         .filter(m => m.measurement_points)
         .map(m => ({
-          alarmLevel: m.alarm_level,
-          measuredAt: m.measured_at,
-          line: m.measurement_points.components?.equipment?.sections?.lines?.name ?? '—',
-          equipmentTag: m.measurement_points.components?.equipment?.tag ?? '—',
-          point: m.measurement_points.name,
+          alarmLevel:      m.alarm_level,
+          measuredAt:      m.measured_at,
+          line:            m.measurement_points.components?.equipment?.sections?.lines?.name ?? '—',
+          equipmentTag:    m.measurement_points.components?.equipment?.tag ?? '—',
+          equipmentStatus: m.measurement_points.components?.equipment?.status ?? 'active',
+          point:           m.measurement_points.name,
         }));
 
       setRows(flat);
@@ -210,21 +213,24 @@ export default function Dashboard() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
+  // Only active equipment counts toward KPIs — inactive/replaced assets are excluded
+  const activeRows = rows.filter(r => r.equipmentStatus === 'active' || r.equipmentStatus == null);
+
   const byLevel = {
-    Danger:  rows.filter(r => r.alarmLevel === 'Danger'),
-    Warning: rows.filter(r => r.alarmLevel === 'Warning'),
-    Alert:   rows.filter(r => r.alarmLevel === 'Alert'),
-    Normal:  rows.filter(r => r.alarmLevel === 'Normal'),
+    Danger:  activeRows.filter(r => r.alarmLevel === 'Danger'),
+    Warning: activeRows.filter(r => r.alarmLevel === 'Warning'),
+    Alert:   activeRows.filter(r => r.alarmLevel === 'Alert'),
+    Normal:  activeRows.filter(r => r.alarmLevel === 'Normal'),
   };
 
   const pieData = (['Normal', 'Alert', 'Warning', 'Danger'] as const)
     .map(l => ({ name: l, value: byLevel[l].length, color: ALARM[l].color }))
     .filter(d => d.value > 0);
 
-  // ── Route compliance (90-day window) ──────────────────────────────────────
+  // ── Route compliance (90-day window, active equipment only) ────────────────
   const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
   const latestByEquipment = new Map<string, number>();
-  rows.forEach(r => {
+  activeRows.forEach(r => {
     const t = new Date(r.measuredAt).getTime();
     if ((latestByEquipment.get(r.equipmentTag) ?? 0) < t) latestByEquipment.set(r.equipmentTag, t);
   });
@@ -318,26 +324,20 @@ export default function Dashboard() {
 
       {!noScope && !loading && (
         <>
-          {/* Alarm panels + pie */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
-            <div className="lg:col-span-3 space-y-3">
-              <AlarmPanel level="Danger"  rows={byLevel.Danger}  />
-              <AlarmPanel level="Warning" rows={byLevel.Warning} />
-              <AlarmPanel level="Alert"   rows={byLevel.Alert}   />
-            </div>
+          {/* Charts row — Alarm Distribution + Route Compliance side by side */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-            <div className="lg:col-span-2 space-y-4 lg:sticky lg:top-4">
-
-              {/* Alarm Distribution */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
-                <p className="text-xs text-gray-400 mt-0.5 mb-4">{rows.length} measurement points</p>
-                {pieData.length === 0 ? (
-                  <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet</div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={240}>
+            {/* Alarm Distribution */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
+              <p className="text-xs text-gray-400 mt-0.5">{activeRows.length} active measurement points</p>
+              {pieData.length === 0 ? (
+                <div className="flex items-center justify-center h-52 text-gray-300 text-sm">No data yet</div>
+              ) : (
+                <>
+                  <ResponsiveContainer width="100%" height={200}>
                     <PieChart>
-                      <Pie data={pieData} cx="50%" cy="45%" outerRadius={88} dataKey="value" paddingAngle={2}>
+                      <Pie data={pieData} cx="50%" cy="50%" outerRadius={78} dataKey="value" paddingAngle={2}>
                         {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
                       </Pie>
                       <Tooltip
@@ -347,57 +347,83 @@ export default function Dashboard() {
                       <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                     </PieChart>
                   </ResponsiveContainer>
-                )}
-                <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
-                  {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
-                    <div key={l} className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full shrink-0 ${ALARM[l].dot}`} />
-                      <span className="text-xs text-gray-500 flex-1">{l}</span>
-                      <span className="text-xs font-bold text-gray-800">{byLevel[l].length}</span>
-                      <div className="w-20 bg-gray-100 rounded-full h-1.5">
-                        <div className="h-1.5 rounded-full" style={{ width: rows.length ? `${(byLevel[l].length / rows.length) * 100}%` : '0%', backgroundColor: ALARM[l].color }} />
+                  <div className="mt-1 space-y-2 border-t border-gray-100 pt-3">
+                    {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
+                      <div key={l} className="flex items-center gap-2">
+                        <span className={`w-2 h-2 rounded-full shrink-0 ${ALARM[l].dot}`} />
+                        <span className="text-xs text-gray-500 flex-1">{l}</span>
+                        <span className="text-xs font-bold text-gray-800">{byLevel[l].length}</span>
+                        <div className="w-20 bg-gray-100 rounded-full h-1.5">
+                          <div className="h-1.5 rounded-full" style={{ width: activeRows.length ? `${(byLevel[l].length / activeRows.length) * 100}%` : '0%', backgroundColor: ALARM[l].color }} />
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
 
-              {/* Route Compliance */}
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h2 className="text-sm font-semibold text-gray-800">Route Compliance</h2>
-                <p className="text-xs text-gray-400 mt-0.5 mb-1">Last measurement within 90 days</p>
-                {totalMonitored === 0 ? (
-                  <div className="flex items-center justify-center h-32 text-gray-300 text-sm">No data yet</div>
-                ) : (
-                  <>
-                    {/* Big percentage */}
-                    <div className="flex items-end gap-2 my-3">
-                      <span className={`text-4xl font-bold ${compliancePct >= 80 ? 'text-green-600' : compliancePct >= 50 ? 'text-orange-500' : 'text-red-500'}`}>
-                        {compliancePct}%
-                      </span>
-                      <span className="text-xs text-gray-400 mb-1.5">compliant</span>
-                    </div>
-                    <ResponsiveContainer width="100%" height={140}>
+            {/* Route Compliance */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <h2 className="text-sm font-semibold text-gray-800">Route Compliance</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Last measurement within 90 days</p>
+              {totalMonitored === 0 ? (
+                <div className="flex items-center justify-center h-52 text-gray-300 text-sm">No data yet</div>
+              ) : (
+                <>
+                  {/* Donut with centered percentage */}
+                  <div className="relative mx-auto mt-3" style={{ width: 200, height: 200 }}>
+                    <ResponsiveContainer width="100%" height="100%">
                       <PieChart>
-                        <Pie data={compliancePieData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={3}>
+                        <Pie
+                          data={compliancePieData}
+                          cx="50%" cy="50%"
+                          innerRadius={62} outerRadius={88}
+                          dataKey="value"
+                          paddingAngle={compliancePieData.length > 1 ? 3 : 0}
+                          startAngle={90} endAngle={-270}
+                        >
                           {compliancePieData.map(e => <Cell key={e.name} fill={e.color} />)}
                         </Pie>
                         <Tooltip
                           formatter={(v) => [`${v} equipment`]}
                           contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
                         />
-                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                       </PieChart>
                     </ResponsiveContainer>
-                    <div className="flex justify-between mt-2 text-xs text-gray-500 border-t border-gray-100 pt-3">
-                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />{compliantCount} compliant</span>
-                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{nonCompliantCount} overdue</span>
+                    {/* Center text */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className={`text-3xl font-bold leading-none ${compliancePct >= 80 ? 'text-green-600' : compliancePct >= 50 ? 'text-orange-500' : 'text-red-500'}`}>
+                        {compliancePct}%
+                      </span>
+                      <span className="text-[11px] text-gray-400 mt-1">compliant</span>
                     </div>
-                  </>
-                )}
-              </div>
-
+                  </div>
+                  {/* Breakdown */}
+                  <div className="flex justify-center gap-6 mt-4 text-xs text-gray-500 border-t border-gray-100 pt-4">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
+                      <span><span className="font-bold text-gray-800">{compliantCount}</span> compliant</span>
+                    </span>
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
+                      <span><span className="font-bold text-gray-800">{nonCompliantCount}</span> overdue</span>
+                    </span>
+                    <span className="flex items-center gap-1.5 text-gray-400">
+                      {totalMonitored} total
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
+
+          </div>
+
+          {/* Alarm panels — full width */}
+          <div className="space-y-3">
+            <AlarmPanel level="Danger"  rows={byLevel.Danger}  />
+            <AlarmPanel level="Warning" rows={byLevel.Warning} />
+            <AlarmPanel level="Alert"   rows={byLevel.Alert}   />
           </div>
 
         </>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertTriangle, ShieldAlert, AlertCircle } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 
@@ -15,6 +15,8 @@ interface EquipmentInfo {
   serial_number: string | null;
   installation_date: string | null;
   status: string | null;
+  status_note: string | null;
+  last_replaced_at: string | null;
   location_notes: string | null;
   image_url: string | null;
   spec_rated_power: string | null;
@@ -24,6 +26,14 @@ interface EquipmentInfo {
   spec_temperature: string | null;
   spec_weight: string | null;
   sections: { uas_name: string; lines: { name: string } } | null;
+}
+
+interface EquipmentNote {
+  id: string;
+  note_type: 'general' | 'status_change' | 'replacement';
+  message: string | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
 }
 
 interface Measurement {
@@ -216,45 +226,222 @@ function OverviewTab({ info, onImageUpload, uploading, isCompliant }: {
   );
 }
 
-// ── Findings tab ──────────────────────────────────────────────────────────────
+// ── Asset Health tab ──────────────────────────────────────────────────────────
 
-function FindingsTab({ findings }: { findings: DerivedFinding[] }) {
-  if (findings.length === 0) {
+const ALARM_ICON: Record<string, React.ReactNode> = {
+  Danger:  <ShieldAlert  size={14} />,
+  Warning: <AlertTriangle size={14} />,
+  Alert:   <AlertCircle  size={14} />,
+  Normal:  <CheckCircle2 size={14} />,
+};
+
+function AssetHealthTab({ findings, components, lastReplacedAt }: {
+  findings: DerivedFinding[];
+  components: ComponentData[];
+  lastReplacedAt: string | null;
+}) {
+  // Split findings into current (post-replacement) and archived (pre-replacement)
+  const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
+  const currentFindings  = replacedTs
+    ? findings.filter(f => new Date(f.measuredAt).getTime() > replacedTs)
+    : findings;
+  const archivedFindings = replacedTs
+    ? findings.filter(f => new Date(f.measuredAt).getTime() <= replacedTs)
+    : [];
+
+  const totalPts = components.reduce((sum, c) => sum + (c.measurement_points?.length ?? 0), 0);
+  const isHealthy = currentFindings.length === 0;
+
+  // Worst alarm level per component (current measurements only)
+  const componentHealth = components.map(comp => {
+    const meas  = (comp.measurement_points ?? []).flatMap(mp =>
+      (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs)
+    );
+    const worst = meas.reduce((w, m) => ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal');
+    return { ...comp, worst, hasMeasurements: meas.length > 0 };
+  });
+
+  const allCurrentMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp =>
+    (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs)
+  ));
+  const overallWorst = allCurrentMeas.reduce((w, m) =>
+    ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal'
+  );
+  const overallCfg = A(overallWorst);
+  const allHistoricalMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
+
+  // No data state
+  if (allHistoricalMeas.length === 0) {
     return (
       <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-16 text-gray-400">
         <ClipboardList size={32} className="opacity-30 mb-3" />
-        <p className="text-sm font-medium">No findings</p>
-        <p className="text-xs mt-1">All measurement points are reading Normal</p>
+        <p className="text-sm font-medium">No measurement data</p>
+        <p className="text-xs mt-1">Upload a UAS file to populate health data</p>
       </div>
     );
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div className="divide-y divide-gray-100">
-        {findings.map(f => {
-          const cfg = A(f.alarmLevel);
-          return (
-            <div key={f.id} className="px-6 py-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                    <span className={`text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>{f.alarmLevel.toLowerCase()}</span>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-cyan-50 text-cyan-600">ultrasound</span>
+    <div className="space-y-4">
+
+      {/* Overall health banner */}
+      {/* Replacement notice */}
+      {lastReplacedAt && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3 text-xs text-orange-700">
+          <Wrench size={14} className="shrink-0" />
+          <span>Asset replaced on <span className="font-semibold">{fmtDate(lastReplacedAt)}</span> — showing current measurements only. Archived data is below.</span>
+        </div>
+      )}
+
+      {/* Current health banner */}
+      {allCurrentMeas.length === 0 && lastReplacedAt ? (
+        <div className="bg-blue-50 rounded-xl border border-blue-200 p-5 flex items-center gap-4">
+          <div className="w-11 h-11 rounded-full bg-blue-400 flex items-center justify-center shrink-0">
+            <ClipboardList size={20} className="text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-blue-800">Awaiting First Measurement</p>
+            <p className="text-xs text-blue-600 mt-0.5">No measurements recorded since replacement on {fmtDate(lastReplacedAt)}</p>
+          </div>
+        </div>
+      ) : isHealthy ? (
+        <div className="bg-green-50 rounded-xl border border-green-200 p-5 flex items-center gap-4">
+          <div className="w-11 h-11 rounded-full bg-green-500 flex items-center justify-center shrink-0">
+            <CheckCircle2 size={22} className="text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-green-800">All Clear — Equipment is Healthy</p>
+            <p className="text-xs text-green-600 mt-0.5">
+              {totalPts} measurement point{totalPts !== 1 ? 's' : ''} reading Normal · No issues detected
+            </p>
+          </div>
+        </div>
+      ) : (
+        <div className={`rounded-xl border p-5 flex items-center gap-4 ${overallCfg.bg} border-current`}>
+          <div className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${overallCfg.bar}`}>
+            <span className="text-white">{ALARM_ICON[overallWorst]}</span>
+          </div>
+          <div>
+            <p className={`text-sm font-bold ${overallCfg.text}`}>
+              {overallWorst} — Attention Required
+            </p>
+            <p className={`text-xs mt-0.5 ${overallCfg.text} opacity-80`}>
+              {currentFindings.length} active finding{currentFindings.length !== 1 ? 's' : ''} across {totalPts} measurement point{totalPts !== 1 ? 's' : ''}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Component health breakdown */}
+      {components.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Component Health</p>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {componentHealth.map(comp => {
+              const cfg    = A(comp.worst);
+              const mpCount = comp.measurement_points?.length ?? 0;
+              const issueCount = (comp.measurement_points ?? [])
+                .flatMap(mp => mp.measurements ?? [])
+                .filter(m => m.alarm_level !== 'Normal').length;
+              return (
+                <div key={comp.id} className="px-5 py-3.5 flex items-center gap-3">
+                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cfg.dot}`} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-800">{comp.name}</p>
+                    <p className="text-xs text-gray-400">
+                      {mpCount} point{mpCount !== 1 ? 's' : ''}
+                      {issueCount > 0 ? ` · ${issueCount} issue${issueCount !== 1 ? 's' : ''}` : ''}
+                    </p>
                   </div>
-                  <p className="text-sm font-medium text-gray-900">
-                    {f.alarmLevel} condition detected at <span className="font-semibold">{f.pointName}</span>
-                  </p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Component: {f.componentName} · Overall RMS: {fmt(f.overallRms)} · Peak: {fmt(f.peak)}
-                  </p>
+                  <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full ${cfg.badge}`}>
+                    {ALARM_ICON[comp.worst]}
+                    {comp.worst}
+                  </span>
                 </div>
-                <span className="text-xs text-gray-400 shrink-0 mt-0.5">{fmtDate(f.measuredAt)}</span>
-              </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Active findings list */}
+      {currentFindings.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
+            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Active Findings</p>
+            <span className="text-xs font-semibold text-gray-400">{currentFindings.length} total</span>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {currentFindings.map(f => {
+              const cfg = A(f.alarmLevel);
+              return (
+                <div key={f.id} className="px-5 py-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>
+                          {ALARM_ICON[f.alarmLevel]}
+                          {f.alarmLevel}
+                        </span>
+                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-cyan-50 text-cyan-600">ultrasound</span>
+                      </div>
+                      <p className="text-sm font-medium text-gray-900">
+                        {f.alarmLevel} condition at <span className="font-semibold">{f.pointName}</span>
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {f.componentName} · RMS: {fmt(f.overallRms)} · Peak: {fmt(f.peak)}
+                      </p>
+                    </div>
+                    <span className="text-xs text-gray-400 shrink-0 mt-0.5 whitespace-nowrap">{fmtDate(f.measuredAt)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Archived findings (pre-replacement) */}
+      {archivedFindings.length > 0 && (
+        <div className="rounded-xl border border-gray-200 overflow-hidden opacity-60">
+          <div className="px-5 py-3 border-b border-gray-200 bg-gray-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wide text-gray-400">Archived — Prior to Replacement</span>
             </div>
-          );
-        })}
-      </div>
+            <span className="text-xs text-gray-400">{archivedFindings.length} findings</span>
+          </div>
+          <div className="divide-y divide-gray-100 bg-gray-50">
+            {archivedFindings.map(f => {
+              const cfg = A(f.alarmLevel);
+              return (
+                <div key={f.id} className="px-5 py-3.5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>
+                          {ALARM_ICON[f.alarmLevel]}
+                          {f.alarmLevel}
+                        </span>
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-gray-200 text-gray-500">archived</span>
+                      </div>
+                      <p className="text-sm text-gray-600">
+                        {f.alarmLevel} at <span className="font-medium">{f.pointName}</span>
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {f.componentName} · RMS: {fmt(f.overallRms)} · Peak: {fmt(f.peak)}
+                      </p>
+                    </div>
+                    <span className="text-xs text-gray-400 shrink-0 mt-0.5 whitespace-nowrap">{fmtDate(f.measuredAt)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -273,8 +460,16 @@ function WorkOrdersTab() {
 
 // ── KPIs tab ──────────────────────────────────────────────────────────────────
 
-function KPIsTab({ components }: { components: ComponentData[] }) {
-  const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
+function KPIsTab({ components, status, lastReplacedAt }: {
+  components: ComponentData[];
+  status: string | null;
+  lastReplacedAt: string | null;
+}) {
+  const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
+  // KPIs use only current measurements (post-replacement if applicable)
+  const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp =>
+    (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs)
+  ));
   const dangerCount  = allMeas.filter(m => m.alarm_level === 'Danger').length;
   const warningCount = allMeas.filter(m => m.alarm_level === 'Warning').length;
   const alertCount   = allMeas.filter(m => m.alarm_level === 'Alert').length;
@@ -292,6 +487,11 @@ function KPIsTab({ components }: { components: ComponentData[] }) {
 
   return (
     <div className="space-y-5">
+      {status === 'inactive' && (
+        <div className="bg-gray-100 border border-gray-300 rounded-xl px-4 py-3 text-sm text-gray-500 font-medium">
+          ⚠ This asset is inactive — KPI data is shown for reference only and excluded from site-level calculations.
+        </div>
+      )}
       <div className="grid grid-cols-3 gap-4">
         {kpis.map(k => (
           <div key={k.label} className="bg-white rounded-xl border border-gray-200 p-5">
@@ -369,14 +569,288 @@ function QRTab({ tag, displayName }: { tag: string; displayName: string | null }
   );
 }
 
+// ── Asset Status Panel ────────────────────────────────────────────────────────
+
+function AssetStatusPanel({ info, onStatusUpdate, onRecordReplacement, saving }: {
+  info: EquipmentInfo | null;
+  onStatusUpdate: (status: string, note: string) => void;
+  onRecordReplacement: () => void;
+  saving: boolean;
+}) {
+  const [localStatus, setLocalStatus] = useState(info?.status ?? 'active');
+  const [localNote,   setLocalNote]   = useState(info?.status_note ?? '');
+  const [dirty, setDirty]             = useState(false);
+
+  // Sync with parent data after loads
+  useEffect(() => {
+    setLocalStatus(info?.status ?? 'active');
+    setLocalNote(info?.status_note ?? '');
+    setDirty(false);
+  }, [info?.status, info?.status_note]);
+
+  const STATUS_OPTS = [
+    { value: 'active',   label: 'Active',   dot: 'bg-green-500',  text: 'text-green-700',  ring: 'ring-green-400',  bg: 'bg-green-50'  },
+    { value: 'inactive', label: 'Inactive', dot: 'bg-gray-400',   text: 'text-gray-600',   ring: 'ring-gray-400',   bg: 'bg-gray-100'  },
+  ];
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold text-gray-800">Operational Status</p>
+        {info?.last_replaced_at && (
+          <span className="text-xs text-gray-400">
+            Last replaced: {fmtDate(info.last_replaced_at)}
+          </span>
+        )}
+      </div>
+
+      {/* Status toggle */}
+      <div className="flex gap-2">
+        {STATUS_OPTS.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => { setLocalStatus(opt.value); setDirty(true); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
+              localStatus === opt.value
+                ? `${opt.bg} ${opt.text} ring-2 ${opt.ring} border-transparent`
+                : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+            }`}
+          >
+            <span className={`w-2 h-2 rounded-full ${opt.dot}`} />
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Note field */}
+      <div>
+        <label className="text-xs font-semibold text-gray-400 block mb-1.5">
+          {localStatus === 'inactive' ? 'Reason for inactivity' : 'Status note (optional)'}
+        </label>
+        <textarea
+          value={localNote}
+          onChange={e => { setLocalNote(e.target.value); setDirty(true); }}
+          placeholder={localStatus === 'inactive'
+            ? 'e.g. Motor bearing failure, pending replacement…'
+            : 'Add a note about this asset…'}
+          rows={2}
+          className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-gray-300"
+        />
+      </div>
+
+      {/* Actions row */}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        <button
+          onClick={onRecordReplacement}
+          className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100 transition-colors"
+        >
+          <Wrench size={14} />
+          Record Replacement
+        </button>
+        {dirty && (
+          <button
+            onClick={() => { onStatusUpdate(localStatus, localNote); setDirty(false); }}
+            disabled={saving}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm font-semibold rounded-lg bg-primary text-white hover:bg-primary-light disabled:opacity-50 transition-colors"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : null}
+            Save
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Activity Log ──────────────────────────────────────────────────────────────
+
+const NOTE_STYLE: Record<string, { icon: React.ReactNode; color: string; bg: string }> = {
+  replacement:   { icon: <Wrench size={13} />,        color: 'text-orange-600', bg: 'bg-orange-50 border-orange-200'   },
+  status_change: { icon: <AlertCircle size={13} />,   color: 'text-blue-600',   bg: 'bg-blue-50 border-blue-200'       },
+  general:       { icon: <ClipboardList size={13} />, color: 'text-gray-500',   bg: 'bg-gray-50 border-gray-200'       },
+};
+
+function ActivityLog({ notes }: { notes: EquipmentNote[] }) {
+  if (notes.length === 0) return null;
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <div className="px-5 py-3 border-b border-gray-100 bg-gray-50">
+        <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Activity Log</p>
+      </div>
+      <div className="divide-y divide-gray-50">
+        {notes.map(n => {
+          const s = NOTE_STYLE[n.note_type] ?? NOTE_STYLE.general;
+          const priorSpecs = n.note_type === 'replacement' && n.metadata?.prior_specs
+            ? (n.metadata.prior_specs as Record<string, string | null>)
+            : null;
+          return (
+            <div key={n.id} className="px-5 py-4">
+              <div className="flex items-start gap-3">
+                <span className={`mt-0.5 flex items-center justify-center w-6 h-6 rounded-full border shrink-0 ${s.bg} ${s.color}`}>
+                  {s.icon}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className={`text-xs font-bold uppercase tracking-wide ${s.color}`}>
+                      {n.note_type === 'replacement' ? 'Asset Replaced'
+                        : n.note_type === 'status_change' ? 'Status Changed'
+                        : 'Note'}
+                    </p>
+                    <span className="text-xs text-gray-400 shrink-0">{fmtDate(n.created_at)}</span>
+                  </div>
+                  {n.message && <p className="text-sm text-gray-700 mt-1">{n.message}</p>}
+                  {priorSpecs && (
+                    <div className="mt-2 p-2.5 bg-gray-50 rounded-lg border border-gray-100 text-xs text-gray-500 space-y-0.5">
+                      <p className="font-semibold text-gray-400 uppercase tracking-wide text-[10px] mb-1">Prior Asset Specs</p>
+                      {priorSpecs.manufacturer && <p>Manufacturer: {priorSpecs.manufacturer}</p>}
+                      {priorSpecs.model        && <p>Model: {priorSpecs.model}</p>}
+                      {priorSpecs.serial_number && <p>Serial: {priorSpecs.serial_number}</p>}
+                      {priorSpecs.asset_type   && <p>Type: {priorSpecs.asset_type}</p>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Replace Modal ─────────────────────────────────────────────────────────────
+
+function ReplaceModal({ onConfirm, onCancel, note, setNote, loading }: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  note: string;
+  setNote: (v: string) => void;
+  loading: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl border border-gray-200 shadow-xl w-full max-w-md p-6 space-y-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+            <Wrench size={18} className="text-orange-600" />
+          </div>
+          <div>
+            <p className="text-base font-bold text-gray-900">Record Asset Replacement</p>
+            <p className="text-xs text-gray-400 mt-0.5">All prior measurements will be archived</p>
+          </div>
+        </div>
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 space-y-1">
+          <p className="font-semibold">What this does:</p>
+          <ul className="list-disc list-inside space-y-0.5 ml-1">
+            <li>Records the replacement timestamp</li>
+            <li>Prior measurements are marked as archived (still visible)</li>
+            <li>Saves a snapshot of current specs in the activity log</li>
+            <li>Asset status is set back to Active</li>
+          </ul>
+        </div>
+        <div>
+          <label className="text-xs font-semibold text-gray-500 block mb-1.5">
+            Replacement notes <span className="font-normal text-gray-400">(optional)</span>
+          </label>
+          <textarea
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="e.g. Motor replaced with ABB M3BP 55kW, serial XYZ789. Bearing failure was root cause."
+            rows={3}
+            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-gray-300"
+            autoFocus
+          />
+        </div>
+        <div className="flex gap-3 pt-1">
+          <button
+            onClick={onCancel}
+            className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={loading}
+            className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+          >
+            {loading && <Loader2 size={13} className="animate-spin" />}
+            Confirm Replacement
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: Props) {
-  const [activeTab, setActiveTab]   = useState<Tab>('overview');
-  const [info, setInfo]             = useState<EquipmentInfo | null>(null);
-  const [components, setComponents] = useState<ComponentData[]>([]);
-  const [loading, setLoading]       = useState(true);
-  const [uploading, setUploading]   = useState(false);
+  const [activeTab, setActiveTab]       = useState<Tab>('overview');
+  const [info, setInfo]                 = useState<EquipmentInfo | null>(null);
+  const [components, setComponents]     = useState<ComponentData[]>([]);
+  const [loading, setLoading]           = useState(true);
+  const [uploading, setUploading]       = useState(false);
+  const [notes, setNotes]               = useState<EquipmentNote[]>([]);
+  const [savingStatus, setSavingStatus] = useState(false);
+  const [showReplaceModal, setShowReplaceModal] = useState(false);
+  const [replacingNote, setReplacingNote]       = useState('');
+  const [recording, setRecording]               = useState(false);
+
+  async function loadNotes() {
+    const { data } = await supabase
+      .from('equipment_notes')
+      .select('id, note_type, message, metadata, created_at')
+      .eq('equipment_id', equipmentId)
+      .order('created_at', { ascending: false });
+    setNotes((data ?? []) as EquipmentNote[]);
+  }
+
+  async function handleStatusUpdate(newStatus: string, newNote: string) {
+    setSavingStatus(true);
+    const oldStatus = info?.status ?? 'active';
+    await supabase.from('equipment').update({ status: newStatus, status_note: newNote }).eq('id', equipmentId);
+    await supabase.from('equipment_notes').insert({
+      equipment_id: equipmentId,
+      note_type:    'status_change',
+      message:      newNote || `Status changed to ${newStatus}`,
+      metadata:     { from: oldStatus, to: newStatus },
+    });
+    setInfo(prev => prev ? { ...prev, status: newStatus, status_note: newNote } : prev);
+    await loadNotes();
+    setSavingStatus(false);
+  }
+
+  async function handleRecordReplacement(noteText: string) {
+    setRecording(true);
+    const now = new Date().toISOString();
+    // Snapshot old specs for the notes metadata
+    const snapshot = {
+      image_url:       info?.image_url,
+      manufacturer:    info?.manufacturer,
+      model:           info?.model,
+      serial_number:   info?.serial_number,
+      asset_type:      info?.asset_type,
+      installation_date: info?.installation_date,
+      spec_rated_power: info?.spec_rated_power,
+      spec_rated_speed: info?.spec_rated_speed,
+    };
+    await supabase.from('equipment').update({
+      last_replaced_at: now,
+      status:           'active',
+      status_note:      null,
+    }).eq('id', equipmentId);
+    await supabase.from('equipment_notes').insert({
+      equipment_id: equipmentId,
+      note_type:    'replacement',
+      message:      noteText || 'Asset replaced',
+      metadata:     { replaced_at: now, prior_specs: snapshot },
+    });
+    setInfo(prev => prev ? { ...prev, last_replaced_at: now, status: 'active', status_note: null } : prev);
+    setShowReplaceModal(false);
+    setReplacingNote('');
+    await loadNotes();
+    setRecording(false);
+  }
 
   const handleImageUpload = async (file: File) => {
     setUploading(true);
@@ -417,7 +891,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         // 2. Extended fields (only after migration — silently skip on error)
         const extRes = await supabase
           .from('equipment')
-          .select(`display_name, asset_type, manufacturer, model, serial_number, installation_date, status, location_notes, spec_rated_power, spec_rated_speed, spec_flow_rate, spec_pressure, spec_temperature, spec_weight`)
+          .select(`display_name, asset_type, manufacturer, model, serial_number, installation_date, status, status_note, last_replaced_at, location_notes, spec_rated_power, spec_rated_speed, spec_flow_rate, spec_pressure, spec_temperature, spec_weight`)
           .eq('id', equipmentId)
           .single();
 
@@ -469,6 +943,13 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         }));
 
         setComponents(assembled);
+        // Load activity log (non-blocking)
+        supabase
+          .from('equipment_notes')
+          .select('id, note_type, message, metadata, created_at')
+          .eq('equipment_id', equipmentId)
+          .order('created_at', { ascending: false })
+          .then(({ data }) => setNotes((data ?? []) as EquipmentNote[]));
       } catch (err) {
         console.error('EquipmentDetail load error:', err);
       } finally {
@@ -514,7 +995,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
 
   const tabs = [
     { id: 'overview'     as Tab, label: 'Overview'                             },
-    { id: 'asset-health' as Tab, label: 'Asset Health', count: findings.length },
+    { id: 'asset-health' as Tab, label: 'Asset Health', count: findings.length > 0 ? findings.length : undefined },
     { id: 'workorders'   as Tab, label: 'Work Orders'                          },
     { id: 'kpis'         as Tab, label: 'KPIs'                                 },
     { id: 'qr'           as Tab, label: 'QR Code'                              },
@@ -522,6 +1003,17 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
 
   return (
     <div>
+      {/* Replace modal */}
+      {showReplaceModal && (
+        <ReplaceModal
+          onConfirm={() => handleRecordReplacement(replacingNote)}
+          onCancel={() => { setShowReplaceModal(false); setReplacingNote(''); }}
+          note={replacingNote}
+          setNote={setReplacingNote}
+          loading={recording}
+        />
+      )}
+
       {/* Back + header */}
       <div className="mb-5">
         <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-700 transition-colors mb-3">
@@ -539,6 +1031,17 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         </div>
       </div>
 
+      {/* Inactive asset banner */}
+      {!loading && info?.status === 'inactive' && (
+        <div className="mb-4 bg-gray-100 border border-gray-300 rounded-xl px-4 py-3 flex items-start gap-3">
+          <span className="w-2 h-2 rounded-full bg-gray-400 shrink-0 mt-1.5" />
+          <div>
+            <p className="text-sm font-semibold text-gray-600">Asset is currently inactive — excluded from KPIs and compliance</p>
+            {info.status_note && <p className="text-xs text-gray-400 mt-0.5">{info.status_note}</p>}
+          </div>
+        </div>
+      )}
+
       {/* Tab bar */}
       <div className="flex items-center gap-1 border-b border-gray-200 mb-5 overflow-x-auto">
         {tabs.map(t => (
@@ -551,10 +1054,25 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         <div className="flex justify-center py-24"><Loader2 size={24} className="animate-spin text-gray-300" /></div>
       ) : (
         <>
-          {activeTab === 'overview'     && <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} />}
-          {activeTab === 'asset-health' && <FindingsTab findings={findings} />}
+          {activeTab === 'overview' && (
+            <div className="space-y-4">
+              <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} />
+              <AssetStatusPanel
+                info={info}
+                onStatusUpdate={handleStatusUpdate}
+                onRecordReplacement={() => setShowReplaceModal(true)}
+                saving={savingStatus}
+              />
+              <ActivityLog notes={notes} />
+            </div>
+          )}
+          {activeTab === 'asset-health' && (
+            <AssetHealthTab findings={findings} components={components} lastReplacedAt={info?.last_replaced_at ?? null} />
+          )}
           {activeTab === 'workorders'   && <WorkOrdersTab />}
-          {activeTab === 'kpis'         && <KPIsTab components={components} />}
+          {activeTab === 'kpis' && (
+            <KPIsTab components={components} status={info?.status ?? null} lastReplacedAt={info?.last_replaced_at ?? null} />
+          )}
           {activeTab === 'qr'       && <QRTab tag={equipmentTag} displayName={info?.display_name ?? null} />}
         </>
       )}
