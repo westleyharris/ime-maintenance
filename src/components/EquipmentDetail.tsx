@@ -83,7 +83,7 @@ function fmtDate(iso: string | null) {
   return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
-type Tab = 'overview' | 'findings' | 'kpis' | 'qr';
+type Tab = 'overview' | 'asset-health' | 'workorders' | 'kpis' | 'qr';
 
 // ── Tab button ────────────────────────────────────────────────────────────────
 
@@ -105,10 +105,11 @@ function TabBtn({ active, label, count, onClick }: { active: boolean; label: str
 
 // ── Overview tab ─────────────────────────────────────────────────────────────
 
-function OverviewTab({ info, onImageUpload, uploading }: {
+function OverviewTab({ info, onImageUpload, uploading, isCompliant }: {
   info: EquipmentInfo | null;
   onImageUpload: (file: File) => void;
   uploading: boolean;
+  isCompliant: boolean | null;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const dash = (v: string | null | undefined) => v || '—';
@@ -185,6 +186,16 @@ function OverviewTab({ info, onImageUpload, uploading }: {
                 )}
               </div>
             ))}
+            {/* Compliance badge */}
+            <div>
+              <p className="text-xs text-gray-400 mb-0.5">Route Compliance</p>
+              {isCompliant === null
+                ? <span className="inline-flex text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">No measurements</span>
+                : isCompliant
+                  ? <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">✓ In Compliance</span>
+                  : <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">✕ Out of Compliance</span>
+              }
+            </div>
           </div>
 
           {/* Tech specs */}
@@ -244,6 +255,18 @@ function FindingsTab({ findings }: { findings: DerivedFinding[] }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+// ── Work Orders tab ───────────────────────────────────────────────────────────
+
+function WorkOrdersTab() {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-16 text-gray-400">
+      <ClipboardList size={32} className="opacity-30 mb-3" />
+      <p className="text-sm font-medium">No work orders</p>
+      <p className="text-xs mt-1 text-gray-300">Work order data will be connected here</p>
     </div>
   );
 }
@@ -479,14 +502,22 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
   const worstAlarm = allMeas.reduce((w, m) => ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal');
   const cfg        = A(worstAlarm);
 
+  // Route compliance: last measurement within 90 days = compliant
+  const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
+  const latestMeasMs  = allMeas.length > 0
+    ? Math.max(...allMeas.map(m => new Date(m.measured_at).getTime()))
+    : null;
+  const isCompliant   = latestMeasMs != null ? (Date.now() - latestMeasMs) <= COMPLIANCE_MS : null;
+
   const lineName = (info?.sections as unknown as { uas_name: string; lines: { name: string } } | null)?.lines?.name ?? '';
   const secName  = (info?.sections as unknown as { uas_name: string; lines: { name: string } } | null)?.uas_name ?? '';
 
   const tabs = [
-    { id: 'overview' as Tab, label: 'Overview'                       },
-    { id: 'findings' as Tab, label: 'Findings', count: findings.length },
-    { id: 'kpis'     as Tab, label: 'KPIs'                            },
-    { id: 'qr'       as Tab, label: 'QR Code'                         },
+    { id: 'overview'     as Tab, label: 'Overview'                             },
+    { id: 'asset-health' as Tab, label: 'Asset Health', count: findings.length },
+    { id: 'workorders'   as Tab, label: 'Work Orders'                          },
+    { id: 'kpis'         as Tab, label: 'KPIs'                                 },
+    { id: 'qr'           as Tab, label: 'QR Code'                              },
   ];
 
   return (
@@ -520,9 +551,10 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         <div className="flex justify-center py-24"><Loader2 size={24} className="animate-spin text-gray-300" /></div>
       ) : (
         <>
-          {activeTab === 'overview' && <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} />}
-          {activeTab === 'findings' && <FindingsTab findings={findings} />}
-          {activeTab === 'kpis'     && <KPIsTab components={components} />}
+          {activeTab === 'overview'     && <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} />}
+          {activeTab === 'asset-health' && <FindingsTab findings={findings} />}
+          {activeTab === 'workorders'   && <WorkOrdersTab />}
+          {activeTab === 'kpis'         && <KPIsTab components={components} />}
           {activeTab === 'qr'       && <QRTab tag={equipmentTag} displayName={info?.display_name ?? null} />}
         </>
       )}

@@ -221,6 +221,22 @@ export default function Dashboard() {
     .map(l => ({ name: l, value: byLevel[l].length, color: ALARM[l].color }))
     .filter(d => d.value > 0);
 
+  // ── Route compliance (90-day window) ──────────────────────────────────────
+  const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
+  const latestByEquipment = new Map<string, number>();
+  rows.forEach(r => {
+    const t = new Date(r.measuredAt).getTime();
+    if ((latestByEquipment.get(r.equipmentTag) ?? 0) < t) latestByEquipment.set(r.equipmentTag, t);
+  });
+  const totalMonitored    = latestByEquipment.size;
+  const compliantCount    = Array.from(latestByEquipment.values()).filter(t => Date.now() - t <= COMPLIANCE_MS).length;
+  const nonCompliantCount = totalMonitored - compliantCount;
+  const compliancePct     = totalMonitored > 0 ? Math.round((compliantCount / totalMonitored) * 100) : 0;
+  const compliancePieData = totalMonitored > 0 ? [
+    { name: 'Compliant',     value: compliantCount,    color: '#22c55e' },
+    { name: 'Non-Compliant', value: nonCompliantCount, color: '#ef4444' },
+  ].filter(d => d.value > 0) : [];
+
   const noScope = !selectedCompanyId;
 
   return (
@@ -310,39 +326,77 @@ export default function Dashboard() {
               <AlarmPanel level="Alert"   rows={byLevel.Alert}   />
             </div>
 
-            <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 p-5 lg:sticky lg:top-4">
-              <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
-              <p className="text-xs text-gray-400 mt-0.5 mb-4">{rows.length} measurement points</p>
-              {pieData.length === 0 ? (
-                <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={280}>
-                  <PieChart>
-                    <Pie data={pieData} cx="50%" cy="45%" outerRadius={100} dataKey="value" paddingAngle={2}>
-                      {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
-                    </Pie>
-                    <Tooltip
-                      formatter={(v) => [`${v} points`]}
-                      contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                    />
-                    <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              )}
+            <div className="lg:col-span-2 space-y-4 lg:sticky lg:top-4">
 
-              {/* Mini counts */}
-              <div className="mt-4 space-y-2 border-t border-gray-100 pt-4">
-                {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
-                  <div key={l} className="flex items-center gap-2">
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${ALARM[l].dot}`} />
-                    <span className="text-xs text-gray-500 flex-1">{l}</span>
-                    <span className="text-xs font-bold text-gray-800">{byLevel[l].length}</span>
-                    <div className="w-20 bg-gray-100 rounded-full h-1.5">
-                      <div className="h-1.5 rounded-full" style={{ width: rows.length ? `${(byLevel[l].length / rows.length) * 100}%` : '0%', backgroundColor: ALARM[l].color }} />
+              {/* Alarm Distribution */}
+              <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
+                <p className="text-xs text-gray-400 mt-0.5 mb-4">{rows.length} measurement points</p>
+                {pieData.length === 0 ? (
+                  <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height={240}>
+                    <PieChart>
+                      <Pie data={pieData} cx="50%" cy="45%" outerRadius={88} dataKey="value" paddingAngle={2}>
+                        {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
+                      </Pie>
+                      <Tooltip
+                        formatter={(v) => [`${v} points`]}
+                        contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                      />
+                      <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+                <div className="mt-3 space-y-2 border-t border-gray-100 pt-3">
+                  {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
+                    <div key={l} className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full shrink-0 ${ALARM[l].dot}`} />
+                      <span className="text-xs text-gray-500 flex-1">{l}</span>
+                      <span className="text-xs font-bold text-gray-800">{byLevel[l].length}</span>
+                      <div className="w-20 bg-gray-100 rounded-full h-1.5">
+                        <div className="h-1.5 rounded-full" style={{ width: rows.length ? `${(byLevel[l].length / rows.length) * 100}%` : '0%', backgroundColor: ALARM[l].color }} />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
+
+              {/* Route Compliance */}
+              <div className="bg-white rounded-xl border border-gray-200 p-5">
+                <h2 className="text-sm font-semibold text-gray-800">Route Compliance</h2>
+                <p className="text-xs text-gray-400 mt-0.5 mb-1">Last measurement within 90 days</p>
+                {totalMonitored === 0 ? (
+                  <div className="flex items-center justify-center h-32 text-gray-300 text-sm">No data yet</div>
+                ) : (
+                  <>
+                    {/* Big percentage */}
+                    <div className="flex items-end gap-2 my-3">
+                      <span className={`text-4xl font-bold ${compliancePct >= 80 ? 'text-green-600' : compliancePct >= 50 ? 'text-orange-500' : 'text-red-500'}`}>
+                        {compliancePct}%
+                      </span>
+                      <span className="text-xs text-gray-400 mb-1.5">compliant</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={140}>
+                      <PieChart>
+                        <Pie data={compliancePieData} cx="50%" cy="50%" innerRadius={40} outerRadius={65} dataKey="value" paddingAngle={3}>
+                          {compliancePieData.map(e => <Cell key={e.name} fill={e.color} />)}
+                        </Pie>
+                        <Tooltip
+                          formatter={(v) => [`${v} equipment`]}
+                          contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                        />
+                        <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
+                      </PieChart>
+                    </ResponsiveContainer>
+                    <div className="flex justify-between mt-2 text-xs text-gray-500 border-t border-gray-100 pt-3">
+                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 inline-block" />{compliantCount} compliant</span>
+                      <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500 inline-block" />{nonCompliantCount} overdue</span>
+                    </div>
+                  </>
+                )}
+              </div>
+
             </div>
           </div>
 
