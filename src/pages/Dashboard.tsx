@@ -213,8 +213,8 @@ export default function Dashboard() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  // Only active equipment counts toward KPIs — inactive/replaced assets are excluded
-  const activeRows = rows.filter(r => r.equipmentStatus === 'active' || r.equipmentStatus == null);
+  // Inactive equipment is excluded from KPIs; replaced/active equipment is included
+  const activeRows = rows.filter(r => r.equipmentStatus !== 'inactive');
 
   const byLevel = {
     Danger:  activeRows.filter(r => r.alarmLevel === 'Danger'),

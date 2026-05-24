@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertTriangle, ShieldAlert, AlertCircle } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertTriangle, ShieldAlert, AlertCircle, ChevronDown } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 
@@ -718,66 +718,347 @@ function ActivityLog({ notes }: { notes: EquipmentNote[] }) {
   );
 }
 
-// ── Replace Modal ─────────────────────────────────────────────────────────────
+// ── Prior Asset Card ──────────────────────────────────────────────────────────
 
-function ReplaceModal({ onConfirm, onCancel, note, setNote, loading }: {
-  onConfirm: () => void;
+function PriorAssetCard({ note }: { note: EquipmentNote }) {
+  const [expanded, setExpanded] = useState(false);
+  const prior = (note.metadata?.prior_specs ?? {}) as Record<string, string | null>;
+  const replacedAt = (note.metadata?.replaced_at as string | null) ?? note.created_at;
+  const dash = (v: string | null | undefined) => v || '—';
+
+  const fields = [
+    { label: 'Asset Type',        value: dash(prior.asset_type) },
+    { label: 'Manufacturer',      value: dash(prior.manufacturer) },
+    { label: 'Model',             value: dash(prior.model) },
+    { label: 'Serial Number',     value: dash(prior.serial_number) },
+    { label: 'Installation Date', value: fmtDate(prior.installation_date ?? null) },
+    { label: 'Rated Power',       value: dash(prior.spec_rated_power) },
+    { label: 'Rated Speed',       value: dash(prior.spec_rated_speed) },
+    { label: 'Flow Rate',         value: dash(prior.spec_flow_rate) },
+    { label: 'Pressure',          value: dash(prior.spec_pressure) },
+    { label: 'Temperature',       value: dash(prior.spec_temperature) },
+    { label: 'Weight',            value: dash(prior.spec_weight) },
+  ];
+
+  return (
+    <div className="rounded-xl border border-gray-200 overflow-hidden opacity-60 hover:opacity-80 transition-opacity">
+      {/* Header */}
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center justify-between gap-3 px-5 py-3.5 bg-gray-100 border-b border-gray-200 hover:bg-gray-50 transition-colors"
+      >
+        <div className="flex items-center gap-2.5">
+          <Wrench size={14} className="text-gray-400" />
+          <span className="text-xs font-bold uppercase tracking-wide text-gray-400">
+            Prior Asset — Replaced {fmtDate(replacedAt)}
+          </span>
+        </div>
+        <ChevronDown size={14} className={`text-gray-400 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+      </button>
+
+      {expanded && (
+        <div className="bg-gray-50">
+          <div className="flex">
+            {/* Old image */}
+            <div className="w-56 shrink-0 border-r border-gray-200 flex items-center justify-center p-5 min-h-[200px]">
+              {prior.image_url ? (
+                <img src={prior.image_url} alt="Prior asset" className="max-w-full max-h-36 object-contain rounded grayscale opacity-70" />
+              ) : (
+                <div className="flex flex-col items-center gap-2 text-gray-300">
+                  <Wrench size={32} />
+                  <p className="text-xs">No image</p>
+                </div>
+              )}
+            </div>
+            {/* Old specs */}
+            <div className="flex-1 p-5">
+              {note.message && (
+                <p className="text-xs text-gray-500 italic mb-4 pb-3 border-b border-gray-200">"{note.message}"</p>
+              )}
+              <div className="grid grid-cols-3 gap-x-8 gap-y-3">
+                {fields.map(f => (
+                  <div key={f.label}>
+                    <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">{f.label}</p>
+                    <p className="text-sm text-gray-500">{f.value}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Replace Modal (2-step) ────────────────────────────────────────────────────
+
+interface NewAssetSpecs {
+  display_name: string;
+  asset_type: string;
+  manufacturer: string;
+  model: string;
+  serial_number: string;
+  installation_date: string;
+  spec_rated_power: string;
+  spec_rated_speed: string;
+  spec_flow_rate: string;
+  spec_pressure: string;
+  spec_temperature: string;
+  spec_weight: string;
+}
+
+function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
+  equipmentId: string;
+  currentInfo: EquipmentInfo | null;
+  onComplete: () => Promise<void>;
   onCancel: () => void;
-  note: string;
-  setNote: (v: string) => void;
-  loading: boolean;
 }) {
+  const [step, setStep]         = useState<1 | 2>(1);
+  const [note, setNote]         = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [saving, setSaving]     = useState(false);
+  const [specs, setSpecs]       = useState<NewAssetSpecs>({
+    display_name:      currentInfo?.display_name ?? '',
+    asset_type:        currentInfo?.asset_type ?? '',
+    manufacturer:      '',
+    model:             '',
+    serial_number:     '',
+    installation_date: new Date().toISOString().slice(0, 10),
+    spec_rated_power:  '',
+    spec_rated_speed:  '',
+    spec_flow_rate:    '',
+    spec_pressure:     '',
+    spec_temperature:  '',
+    spec_weight:       '',
+  });
+  const [newImageFile,    setNewImageFile]    = useState<File | null>(null);
+  const [newImagePreview, setNewImagePreview] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const sp = (k: keyof NewAssetSpecs) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setSpecs(prev => ({ ...prev, [k]: e.target.value }));
+
+  async function confirmReplacement() {
+    setConfirming(true);
+    const now = new Date().toISOString();
+    const snapshot = {
+      image_url:         currentInfo?.image_url,
+      display_name:      currentInfo?.display_name,
+      asset_type:        currentInfo?.asset_type,
+      manufacturer:      currentInfo?.manufacturer,
+      model:             currentInfo?.model,
+      serial_number:     currentInfo?.serial_number,
+      installation_date: currentInfo?.installation_date,
+      spec_rated_power:  currentInfo?.spec_rated_power,
+      spec_rated_speed:  currentInfo?.spec_rated_speed,
+      spec_flow_rate:    currentInfo?.spec_flow_rate,
+      spec_pressure:     currentInfo?.spec_pressure,
+      spec_temperature:  currentInfo?.spec_temperature,
+      spec_weight:       currentInfo?.spec_weight,
+    };
+    await supabase.from('equipment').update({
+      last_replaced_at: now,
+      status:           'active',
+      status_note:      null,
+    }).eq('id', equipmentId);
+    await supabase.from('equipment_notes').insert({
+      equipment_id: equipmentId,
+      note_type:    'replacement',
+      message:      note || 'Asset replaced',
+      metadata:     { replaced_at: now, prior_specs: snapshot },
+    });
+    setConfirming(false);
+    setStep(2);
+  }
+
+  async function saveNewSpecs() {
+    setSaving(true);
+    let imageUrl = currentInfo?.image_url ?? null;
+
+    if (newImageFile) {
+      const ext  = newImageFile.name.split('.').pop() ?? 'jpg';
+      const path = `${equipmentId}.${ext}`;
+      const { error: uploadErr } = await supabase.storage
+        .from('equipment-images')
+        .upload(path, newImageFile, { upsert: true });
+      if (!uploadErr) {
+        imageUrl = supabase.storage.from('equipment-images').getPublicUrl(path).data.publicUrl;
+      }
+    }
+
+    // Only update fields that were actually filled in
+    const updates: Record<string, string | null> = { image_url: imageUrl };
+    (Object.keys(specs) as (keyof NewAssetSpecs)[]).forEach(k => {
+      if (specs[k].trim()) updates[k] = specs[k].trim();
+    });
+
+    await supabase.from('equipment').update(updates).eq('id', equipmentId);
+    setSaving(false);
+    await onComplete();
+  }
+
+  function pickImage(file: File) {
+    setNewImageFile(file);
+    const reader = new FileReader();
+    reader.onload = e => setNewImagePreview(e.target?.result as string);
+    reader.readAsDataURL(file);
+  }
+
+  const inputCls = 'w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-gray-300';
+  const labelCls = 'text-xs font-semibold text-gray-400 block mb-1';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
-      <div className="bg-white rounded-2xl border border-gray-200 shadow-xl w-full max-w-md p-6 space-y-4">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
-            <Wrench size={18} className="text-orange-600" />
+      {step === 1 ? (
+        /* ── Step 1: Confirm ── */
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-xl w-full max-w-md p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+              <Wrench size={18} className="text-orange-600" />
+            </div>
+            <div>
+              <p className="text-base font-bold text-gray-900">Record Asset Replacement</p>
+              <p className="text-xs text-gray-400 mt-0.5">Step 1 of 2 — Confirm &amp; archive prior asset</p>
+            </div>
+          </div>
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 space-y-1">
+            <p className="font-semibold">What happens next:</p>
+            <ul className="list-disc list-inside space-y-0.5 ml-1">
+              <li>Prior measurements are archived (still visible below)</li>
+              <li>Current specs are snapshotted to the activity log</li>
+              <li>You'll enter the new asset's specs on the next screen</li>
+            </ul>
           </div>
           <div>
-            <p className="text-base font-bold text-gray-900">Record Asset Replacement</p>
-            <p className="text-xs text-gray-400 mt-0.5">All prior measurements will be archived</p>
+            <label className={labelCls}>
+              Replacement notes <span className="font-normal">(optional)</span>
+            </label>
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="e.g. Motor bearing failure was root cause. Replaced with same spec unit."
+              rows={3}
+              className={inputCls + ' resize-none'}
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-3 pt-1">
+            <button onClick={onCancel}
+              className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
+              Cancel
+            </button>
+            <button onClick={confirmReplacement} disabled={confirming}
+              className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+              {confirming && <Loader2 size={13} className="animate-spin" />}
+              Confirm &amp; Continue →
+            </button>
           </div>
         </div>
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 space-y-1">
-          <p className="font-semibold">What this does:</p>
-          <ul className="list-disc list-inside space-y-0.5 ml-1">
-            <li>Records the replacement timestamp</li>
-            <li>Prior measurements are marked as archived (still visible)</li>
-            <li>Saves a snapshot of current specs in the activity log</li>
-            <li>Asset status is set back to Active</li>
-          </ul>
+      ) : (
+        /* ── Step 2: New asset details ── */
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col">
+          {/* Header */}
+          <div className="flex items-center gap-3 p-6 border-b border-gray-100 shrink-0">
+            <div className="w-10 h-10 rounded-full bg-green-100 flex items-center justify-center shrink-0">
+              <CheckCircle2 size={18} className="text-green-600" />
+            </div>
+            <div>
+              <p className="text-base font-bold text-gray-900">New Asset Details</p>
+              <p className="text-xs text-gray-400 mt-0.5">Step 2 of 2 — Enter the replacement asset's information</p>
+            </div>
+          </div>
+
+          {/* Scrollable body */}
+          <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            {/* Image + main specs row */}
+            <div className="flex gap-5">
+              {/* Image upload */}
+              <div className="shrink-0 w-48">
+                <label className={labelCls}>Equipment Photo</label>
+                <input ref={fileRef} type="file" accept="image/*" className="hidden"
+                  onChange={e => { if (e.target.files?.[0]) pickImage(e.target.files[0]); e.target.value = ''; }} />
+                <button
+                  onClick={() => fileRef.current?.click()}
+                  className="w-full border-2 border-dashed border-gray-200 rounded-xl overflow-hidden hover:border-primary/40 transition-colors"
+                  style={{ minHeight: 148 }}
+                >
+                  {newImagePreview ? (
+                    <img src={newImagePreview} alt="New asset" className="w-full h-full object-cover" style={{ height: 148 }} />
+                  ) : (
+                    <div className="flex flex-col items-center justify-center gap-2 p-4" style={{ height: 148 }}>
+                      <ImagePlus size={28} className="text-gray-300" />
+                      <p className="text-xs text-gray-400 text-center">Click to upload new photo</p>
+                      <p className="text-[10px] text-gray-300">PNG, JPG, WebP</p>
+                    </div>
+                  )}
+                </button>
+              </div>
+
+              {/* Main fields */}
+              <div className="flex-1 grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <label className={labelCls}>Display Name</label>
+                  <input value={specs.display_name} onChange={sp('display_name')} placeholder={currentInfo?.tag ?? ''} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Asset Type</label>
+                  <input value={specs.asset_type} onChange={sp('asset_type')} placeholder="e.g. Motor, Compressor…" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Installation Date</label>
+                  <input type="date" value={specs.installation_date} onChange={sp('installation_date')} className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Manufacturer</label>
+                  <input value={specs.manufacturer} onChange={sp('manufacturer')} placeholder="e.g. ABB, Siemens…" className={inputCls} />
+                </div>
+                <div>
+                  <label className={labelCls}>Model</label>
+                  <input value={specs.model} onChange={sp('model')} placeholder="e.g. M3BP 55kW" className={inputCls} />
+                </div>
+                <div className="col-span-2">
+                  <label className={labelCls}>Serial Number</label>
+                  <input value={specs.serial_number} onChange={sp('serial_number')} placeholder="e.g. SN-2024-XXXX" className={inputCls} />
+                </div>
+              </div>
+            </div>
+
+            {/* Tech specs */}
+            <div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2">Technical Specifications <span className="font-normal normal-case">(optional)</span></p>
+              <div className="grid grid-cols-3 gap-3 bg-gray-50 rounded-xl p-4">
+                {([
+                  ['Rated Power',  'spec_rated_power',  'e.g. 55 kW'],
+                  ['Rated Speed',  'spec_rated_speed',  'e.g. 1480 RPM'],
+                  ['Flow Rate',    'spec_flow_rate',    'e.g. 120 m³/h'],
+                  ['Pressure',     'spec_pressure',     'e.g. 6 bar'],
+                  ['Temperature',  'spec_temperature',  'e.g. 80°C max'],
+                  ['Weight',       'spec_weight',       'e.g. 320 kg'],
+                ] as [string, keyof NewAssetSpecs, string][]).map(([lbl, key, ph]) => (
+                  <div key={key}>
+                    <label className={labelCls}>{lbl}</label>
+                    <input value={specs[key]} onChange={sp(key)} placeholder={ph} className={inputCls} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Footer actions */}
+          <div className="flex gap-3 p-6 border-t border-gray-100 shrink-0">
+            <button onClick={onComplete}
+              className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors">
+              Skip for now
+            </button>
+            <button onClick={saveNewSpecs} disabled={saving}
+              className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-primary text-white hover:bg-primary-light disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+              {saving && <Loader2 size={13} className="animate-spin" />}
+              Save New Asset Details
+            </button>
+          </div>
         </div>
-        <div>
-          <label className="text-xs font-semibold text-gray-500 block mb-1.5">
-            Replacement notes <span className="font-normal text-gray-400">(optional)</span>
-          </label>
-          <textarea
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            placeholder="e.g. Motor replaced with ABB M3BP 55kW, serial XYZ789. Bearing failure was root cause."
-            rows={3}
-            className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-gray-300"
-            autoFocus
-          />
-        </div>
-        <div className="flex gap-3 pt-1">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={loading}
-            className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-          >
-            {loading && <Loader2 size={13} className="animate-spin" />}
-            Confirm Replacement
-          </button>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -793,8 +1074,6 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
   const [notes, setNotes]               = useState<EquipmentNote[]>([]);
   const [savingStatus, setSavingStatus] = useState(false);
   const [showReplaceModal, setShowReplaceModal] = useState(false);
-  const [replacingNote, setReplacingNote]       = useState('');
-  const [recording, setRecording]               = useState(false);
 
   async function loadNotes() {
     const { data } = await supabase
@@ -820,36 +1099,15 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
     setSavingStatus(false);
   }
 
-  async function handleRecordReplacement(noteText: string) {
-    setRecording(true);
-    const now = new Date().toISOString();
-    // Snapshot old specs for the notes metadata
-    const snapshot = {
-      image_url:       info?.image_url,
-      manufacturer:    info?.manufacturer,
-      model:           info?.model,
-      serial_number:   info?.serial_number,
-      asset_type:      info?.asset_type,
-      installation_date: info?.installation_date,
-      spec_rated_power: info?.spec_rated_power,
-      spec_rated_speed: info?.spec_rated_speed,
-    };
-    await supabase.from('equipment').update({
-      last_replaced_at: now,
-      status:           'active',
-      status_note:      null,
-    }).eq('id', equipmentId);
-    await supabase.from('equipment_notes').insert({
-      equipment_id: equipmentId,
-      note_type:    'replacement',
-      message:      noteText || 'Asset replaced',
-      metadata:     { replaced_at: now, prior_specs: snapshot },
-    });
-    setInfo(prev => prev ? { ...prev, last_replaced_at: now, status: 'active', status_note: null } : prev);
-    setShowReplaceModal(false);
-    setReplacingNote('');
+  // Called by the modal after all steps complete — reloads fresh data from DB
+  async function handleReplacementComplete() {
+    const [baseRes, extRes] = await Promise.all([
+      supabase.from('equipment').select(`id, tag, image_url, sections ( uas_name, lines ( name ) )`).eq('id', equipmentId).single(),
+      supabase.from('equipment').select(`display_name, asset_type, manufacturer, model, serial_number, installation_date, status, status_note, last_replaced_at, location_notes, spec_rated_power, spec_rated_speed, spec_flow_rate, spec_pressure, spec_temperature, spec_weight`).eq('id', equipmentId).single(),
+    ]);
+    setInfo({ ...(baseRes.data ?? {}), ...(extRes.error ? {} : (extRes.data ?? {})) } as unknown as EquipmentInfo);
     await loadNotes();
-    setRecording(false);
+    setShowReplaceModal(false);
   }
 
   const handleImageUpload = async (file: File) => {
@@ -979,23 +1237,35 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
     b.measuredAt.localeCompare(a.measuredAt)
   );
 
-  const allMeas    = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
-  const worstAlarm = allMeas.reduce((w, m) => ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal');
-  const cfg        = A(worstAlarm);
+  const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
 
-  // Route compliance: last measurement within 90 days = compliant
+  // Use only post-replacement measurements for current status indicators
+  const replacedTs   = info?.last_replaced_at ? new Date(info.last_replaced_at).getTime() : null;
+  const currentMeas  = replacedTs ? allMeas.filter(m => new Date(m.measured_at).getTime() > replacedTs) : allMeas;
+  const worstAlarm   = currentMeas.reduce((w, m) => ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal');
+  const cfg          = A(worstAlarm);
+
+  // Current (post-replacement) findings for tab badge
+  const currentFindings = replacedTs
+    ? findings.filter(f => new Date(f.measuredAt).getTime() > replacedTs)
+    : findings;
+
+  // Route compliance based on current measurements only
   const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
-  const latestMeasMs  = allMeas.length > 0
-    ? Math.max(...allMeas.map(m => new Date(m.measured_at).getTime()))
+  const latestMeasMs  = currentMeas.length > 0
+    ? Math.max(...currentMeas.map(m => new Date(m.measured_at).getTime()))
     : null;
   const isCompliant   = latestMeasMs != null ? (Date.now() - latestMeasMs) <= COMPLIANCE_MS : null;
+
+  // Prior replacement note (for Overview prior-asset card)
+  const priorReplacementNote = notes.find(n => n.note_type === 'replacement') ?? null;
 
   const lineName = (info?.sections as unknown as { uas_name: string; lines: { name: string } } | null)?.lines?.name ?? '';
   const secName  = (info?.sections as unknown as { uas_name: string; lines: { name: string } } | null)?.uas_name ?? '';
 
   const tabs = [
-    { id: 'overview'     as Tab, label: 'Overview'                             },
-    { id: 'asset-health' as Tab, label: 'Asset Health', count: findings.length > 0 ? findings.length : undefined },
+    { id: 'overview'     as Tab, label: 'Overview'                                                    },
+    { id: 'asset-health' as Tab, label: 'Asset Health', count: currentFindings.length > 0 ? currentFindings.length : undefined },
     { id: 'workorders'   as Tab, label: 'Work Orders'                          },
     { id: 'kpis'         as Tab, label: 'KPIs'                                 },
     { id: 'qr'           as Tab, label: 'QR Code'                              },
@@ -1006,11 +1276,10 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
       {/* Replace modal */}
       {showReplaceModal && (
         <ReplaceModal
-          onConfirm={() => handleRecordReplacement(replacingNote)}
-          onCancel={() => { setShowReplaceModal(false); setReplacingNote(''); }}
-          note={replacingNote}
-          setNote={setReplacingNote}
-          loading={recording}
+          equipmentId={equipmentId}
+          currentInfo={info}
+          onComplete={handleReplacementComplete}
+          onCancel={() => setShowReplaceModal(false)}
         />
       )}
 
@@ -1025,7 +1294,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
           <span className="text-xs px-2.5 py-0.5 rounded border font-medium bg-gray-50 text-gray-600 border-gray-200">{equipmentTag}</span>
           {lineName && <span className="text-xs px-2.5 py-0.5 rounded border font-medium bg-blue-50 text-blue-700 border-blue-200">{lineName}</span>}
           {secName  && <span className="text-xs px-2.5 py-0.5 rounded border font-medium bg-orange-50 text-orange-700 border-orange-200">{secName}</span>}
-          {allMeas.length > 0 && (
+          {currentMeas.length > 0 && (
             <span className={`text-xs px-2.5 py-0.5 rounded border font-medium ${cfg.bg} ${cfg.text}`}>{worstAlarm}</span>
           )}
         </div>
@@ -1057,6 +1326,9 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
           {activeTab === 'overview' && (
             <div className="space-y-4">
               <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} />
+              {priorReplacementNote && (
+                <PriorAssetCard note={priorReplacementNote} />
+              )}
               <AssetStatusPanel
                 info={info}
                 onStatusUpdate={handleStatusUpdate}
