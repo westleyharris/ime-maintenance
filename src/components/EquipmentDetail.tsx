@@ -90,7 +90,10 @@ const A = (l: string) => ALARM[l as keyof typeof ALARM] ?? ALARM.Normal;
 function fmt(n: number | null, d = 2) { return n == null ? '—' : n.toFixed(d); }
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  // Date-only strings (YYYY-MM-DD) are parsed as UTC midnight by JS, which
+  // rolls back a day in negative-offset timezones. Force noon local time.
+  const normalized = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? iso + 'T12:00:00' : iso;
+  return new Date(normalized).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 type Tab = 'overview' | 'asset-health' | 'workorders' | 'kpis' | 'qr';
@@ -877,10 +880,12 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
     let imageUrl = currentInfo?.image_url ?? null;
     if (newImageFile) {
       const ext  = newImageFile.name.split('.').pop() ?? 'jpg';
-      const path = `${equipmentId}.${ext}`;
+      // Include a timestamp in the path so each replacement gets a unique URL
+      // and the browser never serves a stale cached image.
+      const path = `${equipmentId}_${Date.now()}.${ext}`;
       const { error: uploadErr } = await supabase.storage
         .from('equipment-images')
-        .upload(path, newImageFile, { upsert: true });
+        .upload(path, newImageFile, { upsert: false });
       if (uploadErr) {
         console.error('Image upload failed:', uploadErr);
       } else {
@@ -1141,7 +1146,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
     setUploading(true);
     try {
       const ext  = file.name.split('.').pop() ?? 'jpg';
-      const path = `${equipmentId}.${ext}`;
+      const path = `${equipmentId}_${Date.now()}.${ext}`;
 
       const { error: uploadErr } = await supabase.storage
         .from('equipment-images')
