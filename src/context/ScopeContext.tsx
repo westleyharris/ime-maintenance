@@ -2,19 +2,23 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 import { supabase } from '../lib/supabase';
 import { useAuth } from './AuthContext';
 
-interface Company { id: string; name: string; }
+interface Company  { id: string; name: string; }
 interface Location { id: string; name: string; company_id: string; }
+interface Line     { id: string; name: string; location_id: string; }
 
 interface ScopeContextValue {
   // Selected scope
-  selectedCompanyId: string | null;
+  selectedCompanyId:  string | null;
   selectedLocationId: string | null;
+  selectedLineId:     string | null;
   // Available options
   companies: Company[];
   locations: Location[];
+  lines:     Line[];
   // Setters — only do anything for roles that can change them
-  setCompany: (id: string | null) => void;
+  setCompany:  (id: string | null) => void;
   setLocation: (id: string | null) => void;
+  setLine:     (id: string | null) => void;
   loading: boolean;
 }
 
@@ -23,13 +27,15 @@ const ScopeContext = createContext<ScopeContextValue | null>(null);
 export function ScopeProvider({ children }: { children: ReactNode }) {
   const { profile } = useAuth();
 
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [locations, setLocations] = useState<Location[]>([]);
-  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+  const [companies,          setCompanies]          = useState<Company[]>([]);
+  const [locations,          setLocations]          = useState<Location[]>([]);
+  const [lines,              setLines]              = useState<Line[]>([]);
+  const [selectedCompanyId,  setSelectedCompanyId]  = useState<string | null>(null);
   const [selectedLocationId, setSelectedLocationId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [selectedLineId,     setSelectedLineId]     = useState<string | null>(null);
+  const [loading,            setLoading]            = useState(true);
 
-  const isImeAdmin = profile?.role === 'ime_admin';
+  const isImeAdmin        = profile?.role === 'ime_admin';
   const canChangeLocation = profile?.role === 'ime_admin' || profile?.role === 'company_admin';
 
   // Load companies (ime_admin sees all, others see just their own)
@@ -72,6 +78,18 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     load();
   }, [selectedCompanyId, profile?.role, profile?.location_id]);
 
+  // Load lines when location changes; reset selected line
+  useEffect(() => {
+    setSelectedLineId(null);
+    if (!selectedLocationId) { setLines([]); return; }
+    supabase
+      .from('lines')
+      .select('id, name, location_id')
+      .eq('location_id', selectedLocationId)
+      .order('name')
+      .then(({ data }) => setLines(data ?? []));
+  }, [selectedLocationId]);
+
   const setCompany = (id: string | null) => {
     if (!isImeAdmin) return;
     setSelectedCompanyId(id);
@@ -83,11 +101,13 @@ export function ScopeProvider({ children }: { children: ReactNode }) {
     setSelectedLocationId(id);
   };
 
+  const setLine = (id: string | null) => setSelectedLineId(id);
+
   return (
     <ScopeContext.Provider value={{
-      selectedCompanyId, selectedLocationId,
-      companies, locations,
-      setCompany, setLocation,
+      selectedCompanyId, selectedLocationId, selectedLineId,
+      companies, locations, lines,
+      setCompany, setLocation, setLine,
       loading,
     }}>
       {children}

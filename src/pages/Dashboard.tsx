@@ -118,7 +118,7 @@ function AlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; ro
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
-  const { selectedCompanyId, selectedLocationId } = useScope();
+  const { selectedCompanyId, selectedLocationId, selectedLineId, lines } = useScope();
 
   const [rows, setRows]               = useState<FlatAlarm[]>([]);
   const [loading, setLoading]         = useState(false);
@@ -126,7 +126,6 @@ export default function Dashboard() {
   const [nextVisit, setNextVisit]     = useState<string | null>(null);
   const [showPicker, setShowPicker]   = useState(false);
   const [savingVisit, setSavingVisit] = useState(false);
-  const [selectedLine, setSelectedLine] = useState<string | null>(null);
   const pickerRef                     = useRef<HTMLDivElement>(null);
 
   // Close picker on outside click
@@ -163,9 +162,6 @@ export default function Dashboard() {
     setNextVisit(date);
     setSavingVisit(false);
   };
-
-  // Reset line filter when scope changes
-  useEffect(() => { setSelectedLine(null); }, [selectedCompanyId, selectedLocationId]);
 
   const fetchData = useCallback(async () => {
     if (!selectedCompanyId) { setRows([]); setLastReading(null); return; }
@@ -217,13 +213,15 @@ export default function Dashboard() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  // Unique lines available in the current data set (for the filter pills)
-  const uniqueLines = [...new Set(rows.map(r => r.line).filter(l => l && l !== '—'))].sort();
+  // Resolve selected line ID → name (measurements carry line name, not ID)
+  const selectedLineName = selectedLineId
+    ? (lines.find(l => l.id === selectedLineId)?.name ?? null)
+    : null;
 
   // Inactive equipment excluded from KPIs; line filter applied on top
   const activeRows = rows.filter(r =>
     r.equipmentStatus !== 'inactive' &&
-    (!selectedLine || r.line === selectedLine)
+    (!selectedLineName || r.line === selectedLineName)
   );
 
   const byLevel = {
@@ -332,36 +330,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Line filter — shown once data loads and there are 2+ lines */}
-      {!noScope && !loading && uniqueLines.length > 1 && (
-        <div className="flex items-center gap-2 overflow-x-auto pb-0.5">
-          <span className="text-xs font-semibold text-gray-400 shrink-0">Line:</span>
-          <button
-            onClick={() => setSelectedLine(null)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-              selectedLine === null
-                ? 'bg-primary text-white border-primary'
-                : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-            }`}
-          >
-            All Lines
-          </button>
-          {uniqueLines.map(line => (
-            <button
-              key={line}
-              onClick={() => setSelectedLine(selectedLine === line ? null : line)}
-              className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                selectedLine === line
-                  ? 'bg-primary text-white border-primary'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-              }`}
-            >
-              {line}
-            </button>
-          ))}
-        </div>
-      )}
-
       {!noScope && !loading && (
         <>
           {/* Charts row — Alarm Distribution + Route Compliance side by side */}
@@ -371,7 +339,7 @@ export default function Dashboard() {
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
               <p className="text-xs text-gray-400 mt-0.5">
-                {activeRows.length} active measurement points{selectedLine ? ` · ${selectedLine}` : ''}
+                {activeRows.length} active measurement points{selectedLineName ? ` · ${selectedLineName}` : ''}
               </p>
               {pieData.length === 0 ? (
                 <div className="flex items-center justify-center h-52 text-gray-300 text-sm">No data yet</div>

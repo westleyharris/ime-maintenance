@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
-import { LogOut, ChevronDown, ChevronRight, Building2, MapPin } from 'lucide-react';
+import { LogOut, ChevronDown, ChevronRight, Building2, MapPin, GitBranch } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useScope } from '../context/ScopeContext';
 
@@ -11,14 +12,21 @@ const roleBadge: Record<string, { label: string; className: string }> = {
 };
 
 export default function Header() {
-  const { t, i18n } = useTranslation();
+  const { t, i18n }  = useTranslation();
   const { profile, signOut } = useAuth();
-  const { companies, locations, selectedCompanyId, selectedLocationId, setCompany, setLocation } = useScope();
+  const {
+    companies, locations, lines,
+    selectedCompanyId, selectedLocationId, selectedLineId,
+    setCompany, setLocation, setLine,
+  } = useScope();
+  const { pathname } = useLocation();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const isImeAdmin = profile?.role === 'ime_admin';
+  const isImeAdmin        = profile?.role === 'ime_admin';
   const canChangeLocation = profile?.role === 'ime_admin' || profile?.role === 'company_admin';
+  const isDashboard       = pathname === '/';
+  const showLineFilter    = isDashboard && selectedLocationId !== null && lines.length > 1;
 
   const selectedCompany  = companies.find(c => c.id === selectedCompanyId);
   const selectedLocation = locations.find(l => l.id === selectedLocationId);
@@ -49,7 +57,7 @@ export default function Header() {
       {/* ── Main row ─────────────────────────────────────────────── */}
       <div className="flex items-center h-[56px] px-4 md:px-0">
 
-        {/* Logo — full width on desktop, compact on mobile */}
+        {/* Logo */}
         <div className="flex items-center gap-2 md:w-[260px] md:px-5 shrink-0">
           <img src="/logo.png" alt="IME Logo" className="w-8 h-8 shrink-0"
             onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }} />
@@ -61,6 +69,8 @@ export default function Header() {
         {/* Desktop scope selector */}
         {profile && (
           <div className="hidden md:flex items-center gap-1 ml-2 border-l border-gray-100 pl-4">
+
+            {/* Company */}
             <div className="flex items-center gap-1.5">
               <Building2 size={14} className="text-gray-400 shrink-0" />
               {isImeAdmin ? (
@@ -74,6 +84,7 @@ export default function Header() {
               )}
             </div>
 
+            {/* Location */}
             {selectedCompanyId && (
               <>
                 <ChevronRight size={14} className="text-gray-300 shrink-0" />
@@ -88,6 +99,24 @@ export default function Header() {
                   ) : (
                     <span className="text-sm text-gray-600">{selectedLocation?.name ?? 'All locations'}</span>
                   )}
+                </div>
+              </>
+            )}
+
+            {/* Line — dashboard only, when location selected and 2+ lines exist */}
+            {showLineFilter && (
+              <>
+                <ChevronRight size={14} className="text-gray-300 shrink-0" />
+                <div className="flex items-center gap-1.5">
+                  <GitBranch size={13} className="text-gray-400 shrink-0" />
+                  <select
+                    value={selectedLineId ?? ''}
+                    onChange={e => setLine(e.target.value || null)}
+                    className="text-sm text-gray-600 bg-transparent border-none outline-none cursor-pointer hover:text-primary pr-1 max-w-[160px]"
+                  >
+                    <option value="">All lines</option>
+                    {lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                  </select>
                 </div>
               </>
             )}
@@ -110,7 +139,6 @@ export default function Header() {
                 <div className="w-8 h-8 rounded-full bg-sidebar text-white flex items-center justify-center text-xs font-bold shrink-0">
                   {initials}
                 </div>
-                {/* Name only on desktop */}
                 <div className="hidden md:flex flex-col items-start leading-none">
                   <span className="text-[13px] font-semibold text-gray-800">
                     {profile.full_name ?? profile.email}
@@ -180,6 +208,22 @@ export default function Header() {
                   {selectedLocation?.name ?? 'All locations'}
                 </span>
               )}
+            </>
+          )}
+
+          {/* Mobile line filter — dashboard only */}
+          {showLineFilter && (
+            <>
+              <ChevronRight size={12} className="text-gray-300 shrink-0" />
+              <GitBranch size={12} className="text-gray-400 shrink-0" />
+              <select
+                value={selectedLineId ?? ''}
+                onChange={e => setLine(e.target.value || null)}
+                className="text-xs text-gray-600 bg-transparent border-none outline-none max-w-[140px]"
+              >
+                <option value="">All lines</option>
+                {lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
             </>
           )}
         </div>
