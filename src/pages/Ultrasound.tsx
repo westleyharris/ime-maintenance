@@ -65,16 +65,20 @@ interface EquipmentGroup {
   points: FlatRow[];
 }
 
-function flatten(m: MeasurementRow): FlatRow {
+function flatten(m: MeasurementRow): FlatRow | null {
   const mp = m.measurement_points;
+  if (!mp) return null;
   const comp = mp.components;
+  if (!comp) return null;
   const eq = comp.equipment;
+  if (!eq) return null;
   const sec = eq.sections;
+  if (!sec) return null;
   return {
     id: m.id,
     measurementPointId: mp.id,
-    location: sec.lines.locations.name,
-    line: sec.lines.name,
+    location: sec.lines?.locations?.name ?? '—',
+    line: sec.lines?.name ?? '—',
     section: sec.uas_name,
     equipmentTag: eq.tag,
     component: comp.name,
@@ -326,11 +330,11 @@ export default function Ultrasound() {
       .order('alarm_level');
 
     if (selectedLocationId) {
-      query = query.eq('measurement_points.components.equipment.sections.lines.location_id', selectedLocationId);
+      query = query.eq('location_id', selectedLocationId);
     }
 
     const { data, error } = await query;
-    if (!error && data) setRows((data as unknown as MeasurementRow[]).map(flatten));
+    if (!error && data) setRows((data as unknown as MeasurementRow[]).map(flatten).filter((r): r is FlatRow => r !== null));
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
 
