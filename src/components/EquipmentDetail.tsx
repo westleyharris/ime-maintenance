@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertTriangle, ShieldAlert, AlertCircle, ChevronDown } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 
@@ -87,7 +87,6 @@ const ALARM = {
 };
 const A = (l: string) => ALARM[l as keyof typeof ALARM] ?? ALARM.Normal;
 
-function fmt(n: number | null, d = 2) { return n == null ? '—' : n.toFixed(d); }
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
   // Date-only strings (YYYY-MM-DD) are parsed as UTC midnight by JS, which

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X, CheckCircle2 } from 'lucide-react';
 import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
