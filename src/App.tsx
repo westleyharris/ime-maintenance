@@ -7,6 +7,7 @@ import RequireRole from './components/RequireRole';
 import AppLayout from './layouts/AppLayout';
 import Login from './pages/Login';
 import SetPassword from './pages/SetPassword';
+import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Assets from './pages/Assets';
 import WorkOrders from './pages/WorkOrders';
@@ -26,6 +27,7 @@ export default function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             <Route path="/set-password" element={<SetPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
             {/* All app routes require authentication */}
             <Route element={<RequireAuth />}>

@@ -100,7 +100,7 @@ const ALARM_RANK: Record<string, number> = { Normal: 0, Alert: 1, Warning: 2, Da
 const ALARM = {
   Danger:  { bg: 'bg-red-50',    border: 'border-red-500',    badge: 'bg-red-100 text-red-700',    bar: 'bg-red-500',    dot: 'bg-red-500',    text: 'text-red-600'    },
   Warning: { bg: 'bg-orange-50', border: 'border-orange-500', badge: 'bg-orange-100 text-orange-700', bar: 'bg-orange-500', dot: 'bg-orange-500', text: 'text-orange-600' },
-  Alert:   { bg: 'bg-yellow-50', border: 'border-yellow-400', badge: 'bg-yellow-100 text-yellow-700', bar: 'bg-yellow-400', dot: 'bg-yellow-400', text: 'text-yellow-600' },
+  Alert:   { bg: 'bg-blue-50',   border: 'border-blue-400',   badge: 'bg-blue-100 text-blue-700',   bar: 'bg-blue-400',   dot: 'bg-blue-400',   text: 'text-blue-600'   },
   Normal:  { bg: 'bg-white',     border: 'border-green-400',  badge: 'bg-green-100 text-green-700',  bar: 'bg-green-400',  dot: 'bg-green-500',  text: 'text-green-600'  },
 };
 const A = (level: string) => ALARM[level as keyof typeof ALARM] ?? ALARM.Normal;
@@ -148,7 +148,7 @@ const METRIC_OPTIONS: { key: Metric; label: string; color: string }[] = [
 ];
 
 const ALARM_DOT: Record<string, string> = {
-  Danger: '#ef4444', Warning: '#f97316', Alert: '#eab308', Normal: '#22c55e',
+  Danger: '#ef4444', Warning: '#f97316', Alert: '#60a5fa', Normal: '#22c55e',
 };
 
 function CustomDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: TrendEntry }) {
@@ -508,7 +508,19 @@ export default function Ultrasound() {
                 Clear filters
               </button>
             )}
-            <span className="text-xs text-gray-400 ml-auto">{groups.length} equipment · {filtered.length} points</span>
+            <div className="ml-auto flex items-center gap-3">
+              <span className="text-xs text-gray-400 flex items-center gap-1.5">
+                <span className="flex items-center gap-0.5">
+                  <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                  <span className="w-2 h-2 rounded-full bg-orange-500 inline-block" />
+                  <span className="w-2 h-2 rounded-full bg-blue-400 inline-block" />
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                </span>
+                Sorted by severity
+              </span>
+              <span className="text-xs text-gray-300">·</span>
+              <span className="text-xs text-gray-400">{groups.length} equipment · {filtered.length} points</span>
+            </div>
           </div>
 
           {/* Equipment cards */}

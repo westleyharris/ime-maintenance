@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X } from 'lucide-react';
+import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X, CheckCircle2 } from 'lucide-react';
 import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
-import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,20 +33,19 @@ interface FlatAlarm {
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
 const ALARM = {
-  Danger:  { dot: 'bg-red-500',    badge: 'bg-red-100 text-red-700 border-red-200',    row: 'hover:bg-red-50/50',    border: 'border-red-200',    bg: 'bg-red-50',    title: 'text-red-700',    label: 'Equipment Under Danger',        color: '#ef4444' },
+  Danger:  { dot: 'bg-red-500',    badge: 'bg-red-100 text-red-700 border-red-200',       row: 'hover:bg-red-50/50',    border: 'border-red-200',    bg: 'bg-red-50',    title: 'text-red-700',    label: 'Equipment Under Danger',        color: '#ef4444' },
   Warning: { dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-700 border-orange-200', row: 'hover:bg-orange-50/50', border: 'border-orange-200', bg: 'bg-orange-50', title: 'text-orange-700', label: 'Equipment Under Warning',       color: '#f97316' },
-  Alert:   { dot: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700 border-yellow-200', row: 'hover:bg-yellow-50/50', border: 'border-yellow-200', bg: 'bg-yellow-50', title: 'text-yellow-700', label: 'Equipment Under Slight Warning', color: '#eab308' },
-  Normal:  { dot: 'bg-green-500',  badge: 'bg-green-100 text-green-700 border-green-200',  row: '',                      border: 'border-green-200',  bg: 'bg-green-50',  title: 'text-green-700',  label: 'Normal',                        color: '#22c55e' },
+  Alert:   { dot: 'bg-blue-400',   badge: 'bg-blue-100 text-blue-700 border-blue-200',       row: 'hover:bg-blue-50/50',   border: 'border-blue-200',   bg: 'bg-blue-50',   title: 'text-blue-700',   label: 'Equipment Under Alert',         color: '#60a5fa' },
+  Normal:  { dot: 'bg-green-500',  badge: 'bg-green-100 text-green-700 border-green-200',    row: '',                      border: 'border-green-200',  bg: 'bg-green-50',  title: 'text-green-700',  label: 'Normal',                        color: '#22c55e' },
 };
 
-const PREVIEW_COUNT = 3;
+const PREVIEW_COUNT = 4;
 
 function formatDate(iso: string): string {
   if (!iso) return '—';
   const [y, m, d] = iso.split('-');
   return `${m}/${d}/${y}`;
 }
-
 
 // ── Alarm panel ───────────────────────────────────────────────────────────────
 
@@ -58,19 +57,19 @@ function AlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; ro
 
   return (
     <div className={`rounded-xl border ${t.border} overflow-hidden`}>
-      {/* Panel header */}
-      <div className={`${t.bg} px-4 py-3 flex items-center gap-2.5`}>
-        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${t.dot}`} />
+      {/* Header */}
+      <div className={`${t.bg} px-4 py-2.5 flex items-center gap-2.5`}>
+        <span className={`w-2 h-2 rounded-full shrink-0 ${t.dot}`} />
         <span className={`text-xs font-bold uppercase tracking-widest flex-1 ${t.title}`}>{t.label}</span>
         <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${t.badge}`}>{rows.length}</span>
       </div>
 
       {rows.length === 0 ? (
-        <div className="px-4 py-5 text-xs text-gray-400 italic">No equipment at this level</div>
+        <div className="px-4 py-3.5 text-xs text-gray-400 italic bg-white">No equipment at this level</div>
       ) : (
         <>
           {/* Column headers */}
-          <div className="hidden sm:grid grid-cols-3 gap-3 px-4 py-2 bg-gray-50 border-b border-gray-100">
+          <div className="hidden sm:grid grid-cols-3 gap-3 px-4 py-1.5 bg-gray-50 border-b border-gray-100">
             {['Line', 'Equipment Tag', 'Point'].map(h => (
               <span key={h} className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{h}</span>
             ))}
@@ -79,34 +78,28 @@ function AlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; ro
           {/* Rows */}
           <div className="divide-y divide-gray-50 bg-white">
             {visible.map((r, i) => (
-              <div key={i} className={`px-4 py-2.5 text-xs ${t.row} transition-colors`}>
+              <div key={i} className={`px-4 py-2 text-xs ${t.row} transition-colors`}>
                 <div className="sm:hidden flex items-start justify-between gap-2">
                   <div>
                     <p className="font-mono font-medium text-gray-800">{r.equipmentTag}</p>
-                    <p className="text-gray-500 mt-0.5">{r.point}</p>
-                    <p className="text-gray-400 mt-0.5">{r.line}</p>
+                    <p className="text-gray-500 mt-0.5">{r.point} · {r.line}</p>
                   </div>
                 </div>
                 <div className="hidden sm:grid grid-cols-3 gap-3">
-                  <span className="text-gray-600 truncate">{r.line}</span>
+                  <span className="text-gray-500 truncate">{r.line}</span>
                   <span className="font-mono text-gray-800 font-medium truncate">{r.equipmentTag}</span>
-                  <span className="text-gray-500">{r.point}</span>
+                  <span className="text-gray-500 truncate">{r.point}</span>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Expand / collapse */}
           {hasMore && (
             <button
               onClick={() => setExpanded(!expanded)}
-              className="w-full flex items-center justify-center gap-1.5 py-2.5 text-xs font-semibold text-primary hover:bg-blue-50 transition-colors border-t border-gray-100"
+              className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-semibold text-primary hover:bg-blue-50 transition-colors border-t border-gray-100 bg-white"
             >
-              {expanded ? (
-                <><ChevronUp size={13} /> Show less</>
-              ) : (
-                <><ChevronDown size={13} /> Show {rows.length - PREVIEW_COUNT} more</>
-              )}
+              {expanded ? <><ChevronUp size={12} /> Show less</> : <><ChevronDown size={12} /> {rows.length - PREVIEW_COUNT} more</>}
             </button>
           )}
         </>
@@ -128,26 +121,18 @@ export default function Dashboard() {
   const [savingVisit, setSavingVisit] = useState(false);
   const pickerRef                     = useRef<HTMLDivElement>(null);
 
-  // Close picker on outside click
   useEffect(() => {
     if (!showPicker) return;
     const handler = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setShowPicker(false);
-      }
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) setShowPicker(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [showPicker]);
 
-  // Fetch next visit date for selected location
   useEffect(() => {
     if (!selectedLocationId) { setNextVisit(null); return; }
-    supabase
-      .from('locations')
-      .select('next_visit_date')
-      .eq('id', selectedLocationId)
-      .single()
+    supabase.from('locations').select('next_visit_date').eq('id', selectedLocationId).single()
       .then(({ data }) => setNextVisit(data?.next_visit_date ?? null));
   }, [selectedLocationId]);
 
@@ -155,10 +140,7 @@ export default function Dashboard() {
     setShowPicker(false);
     if (!selectedLocationId) return;
     setSavingVisit(true);
-    await supabase
-      .from('locations')
-      .update({ next_visit_date: date })
-      .eq('id', selectedLocationId);
+    await supabase.from('locations').update({ next_visit_date: date }).eq('id', selectedLocationId);
     setNextVisit(date);
     setSavingVisit(false);
   };
@@ -184,9 +166,8 @@ export default function Dashboard() {
       .eq('company_id', selectedCompanyId)
       .order('measured_at', { ascending: false });
 
-    if (selectedLocationId) {
-      query = query.eq('measurement_points.components.equipment.sections.lines.location_id', selectedLocationId);
-    }
+    // Direct column filter — reliable, unlike deep nested PostgREST filters
+    if (selectedLocationId) query = query.eq('location_id', selectedLocationId);
 
     const { data, error } = await query;
 
@@ -213,12 +194,10 @@ export default function Dashboard() {
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
-  // Resolve selected line ID → name (measurements carry line name, not ID)
   const selectedLineName = selectedLineId
     ? (lines.find(l => l.id === selectedLineId)?.name ?? null)
     : null;
 
-  // Inactive equipment excluded from KPIs; line filter applied on top
   const activeRows = rows.filter(r =>
     r.equipmentStatus !== 'inactive' &&
     (!selectedLineName || r.line === selectedLineName)
@@ -235,7 +214,7 @@ export default function Dashboard() {
     .map(l => ({ name: l, value: byLevel[l].length, color: ALARM[l].color }))
     .filter(d => d.value > 0);
 
-  // ── Route compliance (90-day window, active equipment only) ────────────────
+  // Route compliance (90-day window)
   const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
   const latestByEquipment = new Map<string, number>();
   activeRows.forEach(r => {
@@ -246,197 +225,211 @@ export default function Dashboard() {
   const compliantCount    = Array.from(latestByEquipment.values()).filter(t => Date.now() - t <= COMPLIANCE_MS).length;
   const nonCompliantCount = totalMonitored - compliantCount;
   const compliancePct     = totalMonitored > 0 ? Math.round((compliantCount / totalMonitored) * 100) : 0;
-  const compliancePieData = totalMonitored > 0 ? [
-    { name: 'Compliant',     value: compliantCount,    color: '#22c55e' },
-    { name: 'Non-Compliant', value: nonCompliantCount, color: '#ef4444' },
-  ].filter(d => d.value > 0) : [];
+  const compliantPct      = totalMonitored > 0 ? (compliantCount / totalMonitored) * 100 : 0;
 
   const noScope = !selectedCompanyId;
+  const hasData = activeRows.length > 0;
 
   return (
     <div className="space-y-4">
-      {/* Title + refresh */}
-      <div className="flex items-center justify-between">
+
+      {/* ── Title row ──────────────────────────────────────────────── */}
+      <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-        <button onClick={() => fetchData()} className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors" title="Refresh">
-          {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-        </button>
-      </div>
 
-      {/* Last reading / next visit */}
-      <div className="bg-white rounded-xl border border-gray-200 px-6 py-3.5 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Calendar size={15} className="text-gray-400" />
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Last Reading</p>
-            <p className="text-sm font-bold text-gray-900">{loading ? '…' : lastReading ? formatDate(lastReading) : '—'}</p>
-          </div>
-        </div>
-        <div className="h-8 w-px bg-gray-100" />
-        <div className="relative flex items-center gap-3" ref={pickerRef}>
-          <div className="text-right">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Next Planned Visit</p>
-            {savingVisit
-              ? <p className="text-sm text-gray-400">Saving…</p>
-              : nextVisit
-                ? <p className="text-sm font-bold text-primary">{formatDate(nextVisit)}</p>
-                : <p className="text-sm font-medium text-gray-400">Not scheduled</p>
-            }
-          </div>
-          <button
-            onClick={() => selectedLocationId && setShowPicker(p => !p)}
-            title={selectedLocationId ? 'Set next visit date' : 'Select a location first'}
-            className={`p-1.5 rounded-lg transition-colors ${selectedLocationId ? 'hover:bg-gray-100 cursor-pointer' : 'cursor-not-allowed opacity-40'} ${showPicker ? 'bg-gray-100' : ''}`}
-          >
-            <Calendar size={15} className={nextVisit ? 'text-primary' : 'text-gray-400'} />
-          </button>
-
-          {/* Date picker popover */}
-          {showPicker && (
-            <div className="absolute right-0 top-full mt-2 bg-white rounded-xl border border-gray-200 shadow-lg p-4 z-50 min-w-[220px]">
-              <p className="text-xs font-semibold text-gray-500 mb-2">Set next visit date</p>
-              <input
-                type="date"
-                defaultValue={nextVisit ?? ''}
-                onChange={e => e.target.value && handleSetNextVisit(e.target.value)}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
-                autoFocus
-              />
-              {nextVisit && (
-                <button
-                  onClick={() => handleSetNextVisit(null)}
-                  className="mt-2 flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
-                >
-                  <X size={11} /> Clear date
-                </button>
-              )}
+        <div className="flex items-center gap-2 ml-auto flex-wrap">
+          {/* Last Reading badge */}
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+            <Calendar size={13} className="text-gray-400 shrink-0" />
+            <div className="leading-none">
+              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Last Reading</p>
+              <p className="text-xs font-bold text-gray-800 mt-0.5">
+                {loading ? '…' : lastReading ? formatDate(lastReading) : '—'}
+              </p>
             </div>
-          )}
+          </div>
+
+          {/* Next Visit badge */}
+          <div className="relative" ref={pickerRef}>
+            <button
+              onClick={() => selectedLocationId && setShowPicker(p => !p)}
+              title={selectedLocationId ? 'Set next visit date' : 'Select a location first'}
+              className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-2 shadow-sm transition-colors
+                ${showPicker ? 'border-primary/50 ring-2 ring-primary/20' : 'border-gray-200'}
+                ${selectedLocationId ? 'hover:border-gray-300 cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
+            >
+              <Calendar size={13} className={nextVisit ? 'text-primary shrink-0' : 'text-gray-400 shrink-0'} />
+              <div className="leading-none text-left">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Next Visit</p>
+                <p className={`text-xs font-bold mt-0.5 ${nextVisit ? 'text-primary' : 'text-gray-400'}`}>
+                  {savingVisit ? 'Saving…' : nextVisit ? formatDate(nextVisit) : 'Not set'}
+                </p>
+              </div>
+            </button>
+
+            {showPicker && (
+              <div className="absolute right-0 top-full mt-2 bg-white rounded-xl border border-gray-200 shadow-lg p-4 z-50 min-w-[200px]">
+                <p className="text-xs font-semibold text-gray-500 mb-2">Set next visit date</p>
+                <input
+                  type="date"
+                  defaultValue={nextVisit ?? ''}
+                  onChange={e => e.target.value && handleSetNextVisit(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  autoFocus
+                />
+                {nextVisit && (
+                  <button
+                    onClick={() => handleSetNextVisit(null)}
+                    className="mt-2 flex items-center gap-1 text-xs text-gray-400 hover:text-red-500 transition-colors"
+                  >
+                    <X size={11} /> Clear date
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Refresh */}
+          <button
+            onClick={() => fetchData()}
+            className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors bg-white shadow-sm"
+            title="Refresh"
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+          </button>
         </div>
       </div>
 
-      {/* No company */}
+      {/* ── No company selected ────────────────────────────────────── */}
       {noScope && (
         <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-24 text-gray-400">
           <Building2 size={40} className="mb-3 opacity-30" />
           <p className="text-sm font-medium">No company selected</p>
-          <p className="text-xs mt-1">Select a company from the header to view dashboard</p>
+          <p className="text-xs mt-1">Select a company from the header to view the dashboard</p>
         </div>
       )}
 
       {!noScope && loading && (
-        <div className="flex justify-center py-20">
+        <div className="flex justify-center py-24">
           <Loader2 size={28} className="animate-spin text-gray-300" />
         </div>
       )}
 
+      {/* ── Main layout ────────────────────────────────────────────── */}
       {!noScope && !loading && (
-        <>
-          {/* Charts row — Alarm Distribution + Route Compliance side by side */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4 items-start">
+
+          {/* ── Left column: charts (no card backgrounds) ───────── */}
+          <div className="space-y-6 py-1">
 
             {/* Alarm Distribution */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <h2 className="text-sm font-semibold text-gray-800">Alarm Distribution</h2>
-              <p className="text-xs text-gray-400 mt-0.5">
-                {activeRows.length} active measurement points{selectedLineName ? ` · ${selectedLineName}` : ''}
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Alarm Distribution</h2>
+              <p className="text-xs text-gray-400 mt-0.5 mb-3">
+                {activeRows.length} active points{selectedLineName ? ` · ${selectedLineName}` : ''}
               </p>
-              {pieData.length === 0 ? (
-                <div className="flex items-center justify-center h-52 text-gray-300 text-sm">No data yet</div>
+
+              {!hasData ? (
+                <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet</div>
               ) : (
-                <>
-                  <ResponsiveContainer width="100%" height={200}>
-                    <PieChart>
-                      <Pie data={pieData} cx="50%" cy="50%" outerRadius={78} dataKey="value" paddingAngle={2}>
+                <div className="flex items-center gap-4">
+                  {/* Pie */}
+                  <div className="shrink-0">
+                    <PieChart width={280} height={280}>
+                      <Pie data={pieData} cx="50%" cy="50%" outerRadius={132} dataKey="value" paddingAngle={2}>
                         {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
                       </Pie>
                       <Tooltip
                         formatter={(v) => [`${v} points`]}
-                        contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
                       />
-                      <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 12 }} />
                     </PieChart>
-                  </ResponsiveContainer>
-                  <div className="mt-1 space-y-2 border-t border-gray-100 pt-3">
+                  </div>
+
+                  {/* Legend with bars */}
+                  <div className="flex-1 space-y-3 min-w-0">
                     {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
-                      <div key={l} className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full shrink-0 ${ALARM[l].dot}`} />
-                        <span className="text-xs text-gray-500 flex-1">{l}</span>
-                        <span className="text-xs font-bold text-gray-800">{byLevel[l].length}</span>
-                        <div className="w-20 bg-gray-100 rounded-full h-1.5">
-                          <div className="h-1.5 rounded-full" style={{ width: activeRows.length ? `${(byLevel[l].length / activeRows.length) * 100}%` : '0%', backgroundColor: ALARM[l].color }} />
+                      <div key={l} className="flex items-center gap-2 min-w-0">
+                        <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${ALARM[l].dot}`} />
+                        <span className="text-xs text-gray-600 w-12 shrink-0">{l}</span>
+                        <div className="flex-1 bg-gray-200 rounded-full h-2.5 min-w-0">
+                          <div
+                            className="h-2.5 rounded-full transition-all"
+                            style={{
+                              width: activeRows.length ? `${(byLevel[l].length / activeRows.length) * 100}%` : '0%',
+                              backgroundColor: ALARM[l].color,
+                            }}
+                          />
                         </div>
+                        <span className="text-xs font-bold text-gray-800 w-7 text-right shrink-0">{byLevel[l].length}</span>
                       </div>
                     ))}
                   </div>
-                </>
+                </div>
               )}
             </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-200" />
 
             {/* Route Compliance */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <h2 className="text-sm font-semibold text-gray-800">Route Compliance</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Last measurement within 90 days</p>
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Route Compliance</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Measured within last 90 days</p>
+
               {totalMonitored === 0 ? (
-                <div className="flex items-center justify-center h-52 text-gray-300 text-sm">No data yet</div>
+                <div className="flex items-center justify-center h-24 text-gray-300 text-sm">No data yet</div>
               ) : (
-                <>
-                  {/* Donut with centered percentage */}
-                  <div className="relative mx-auto mt-3" style={{ width: 200, height: 200 }}>
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                          data={compliancePieData}
-                          cx="50%" cy="50%"
-                          innerRadius={62} outerRadius={88}
-                          dataKey="value"
-                          paddingAngle={compliancePieData.length > 1 ? 3 : 0}
-                          startAngle={90} endAngle={-270}
-                        >
-                          {compliancePieData.map(e => <Cell key={e.name} fill={e.color} />)}
-                        </Pie>
-                        <Tooltip
-                          formatter={(v) => [`${v} equipment`]}
-                          contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                        />
-                      </PieChart>
-                    </ResponsiveContainer>
-                    {/* Center text */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className={`text-3xl font-bold leading-none ${compliancePct >= 80 ? 'text-green-600' : compliancePct >= 50 ? 'text-orange-500' : 'text-red-500'}`}>
-                        {compliancePct}%
-                      </span>
-                      <span className="text-[11px] text-gray-400 mt-1">compliant</span>
-                    </div>
+                <div className="mt-4 space-y-3">
+                  {/* Big percentage */}
+                  <div className="flex items-baseline gap-2">
+                    <span className={`text-5xl font-black leading-none ${compliancePct >= 80 ? 'text-green-600' : compliancePct >= 50 ? 'text-orange-500' : 'text-red-500'}`}>
+                      {compliancePct}%
+                    </span>
+                    <span className="text-base font-semibold text-gray-500">Compliant</span>
+                    {compliancePct === 100 && <CheckCircle2 size={18} className="text-green-500 ml-1" />}
                   </div>
-                  {/* Breakdown */}
-                  <div className="flex justify-center gap-6 mt-4 text-xs text-gray-500 border-t border-gray-100 pt-4">
+
+                  {/* Stacked progress bar */}
+                  <div className="w-full h-5 rounded-full bg-gray-200 overflow-hidden flex">
+                    <div className="h-full bg-green-500 transition-all" style={{ width: `${compliantPct}%` }} />
+                    <div className="h-full bg-red-400 transition-all"   style={{ width: `${100 - compliantPct}%` }} />
+                  </div>
+
+                  {/* Legend */}
+                  <div className="flex items-center gap-5 text-xs text-gray-500 mt-1">
                     <span className="flex items-center gap-1.5">
                       <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
-                      <span><span className="font-bold text-gray-800">{compliantCount}</span> compliant</span>
+                      compliant — <span className="font-bold text-gray-800">{compliantCount}</span>
                     </span>
                     <span className="flex items-center gap-1.5">
-                      <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
-                      <span><span className="font-bold text-gray-800">{nonCompliantCount}</span> overdue</span>
-                    </span>
-                    <span className="flex items-center gap-1.5 text-gray-400">
-                      {totalMonitored} total
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-400 shrink-0" />
+                      overdue — <span className="font-bold text-gray-800">{nonCompliantCount}</span>
                     </span>
                   </div>
-                </>
+                </div>
               )}
             </div>
 
           </div>
 
-          {/* Alarm panels — full width */}
+          {/* ── Right column: alarm panels ───────────────────────── */}
           <div className="space-y-3">
-            <AlarmPanel level="Danger"  rows={byLevel.Danger}  />
-            <AlarmPanel level="Warning" rows={byLevel.Warning} />
-            <AlarmPanel level="Alert"   rows={byLevel.Alert}   />
+            {!hasData ? (
+              <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-24 text-gray-400">
+                <p className="text-sm font-medium">No measurements yet</p>
+                <p className="text-xs mt-1">Import data from the Ultrasound page to populate the dashboard</p>
+              </div>
+            ) : (
+              <>
+                <AlarmPanel level="Danger"  rows={byLevel.Danger}  />
+                <AlarmPanel level="Warning" rows={byLevel.Warning} />
+                <AlarmPanel level="Alert"   rows={byLevel.Alert}   />
+              </>
+            )}
           </div>
 
-        </>
+        </div>
       )}
     </div>
   );

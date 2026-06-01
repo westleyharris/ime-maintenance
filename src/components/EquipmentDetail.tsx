@@ -82,7 +82,7 @@ const ALARM_RANK: Record<string, number> = { Normal: 0, Alert: 1, Warning: 2, Da
 const ALARM = {
   Danger:  { bg: 'bg-red-100',    text: 'text-red-700',    bar: 'bg-red-500',    dot: 'bg-red-500',    badge: 'bg-red-100 text-red-700'       },
   Warning: { bg: 'bg-orange-100', text: 'text-orange-700', bar: 'bg-orange-500', dot: 'bg-orange-500', badge: 'bg-orange-100 text-orange-700'  },
-  Alert:   { bg: 'bg-yellow-100', text: 'text-yellow-700', bar: 'bg-yellow-400', dot: 'bg-yellow-400', badge: 'bg-yellow-100 text-yellow-700'  },
+  Alert:   { bg: 'bg-blue-100',   text: 'text-blue-700',   bar: 'bg-blue-400',   dot: 'bg-blue-400',   badge: 'bg-blue-100 text-blue-700'    },
   Normal:  { bg: 'bg-green-100',  text: 'text-green-700',  bar: 'bg-green-500',  dot: 'bg-green-500',  badge: 'bg-green-100 text-green-700'    },
 };
 const A = (l: string) => ALARM[l as keyof typeof ALARM] ?? ALARM.Normal;
@@ -231,219 +231,183 @@ function OverviewTab({ info, onImageUpload, uploading, isCompliant }: {
 
 // ── Asset Health tab ──────────────────────────────────────────────────────────
 
-const ALARM_ICON: Record<string, React.ReactNode> = {
-  Danger:  <ShieldAlert  size={14} />,
-  Warning: <AlertTriangle size={14} />,
-  Alert:   <AlertCircle  size={14} />,
-  Normal:  <CheckCircle2 size={14} />,
-};
+type HealthTimelineEntry =
+  | { kind: 'measurement'; date: string; worstLevel: string; totalCount: number; nonNormalCount: number; breakdown: Record<string, number> }
+  | { kind: 'activity'; date: string; noteType: string; message: string | null; id: string };
 
-function AssetHealthTab({ findings, components, lastReplacedAt }: {
-  findings: DerivedFinding[];
+function AssetHealthTab({ components, notes, info }: {
   components: ComponentData[];
-  lastReplacedAt: string | null;
+  notes: EquipmentNote[];
+  info: EquipmentInfo | null;
 }) {
-  // Split findings into current (post-replacement) and archived (pre-replacement)
-  const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
-  const currentFindings  = replacedTs
-    ? findings.filter(f => new Date(f.measuredAt).getTime() > replacedTs)
-    : findings;
-  const archivedFindings = replacedTs
-    ? findings.filter(f => new Date(f.measuredAt).getTime() <= replacedTs)
-    : [];
-
-  const totalPts = components.reduce((sum, c) => sum + (c.measurement_points?.length ?? 0), 0);
-  const isHealthy = currentFindings.length === 0;
-
-  // Worst alarm level per component (current measurements only)
-  const componentHealth = components.map(comp => {
-    const meas  = (comp.measurement_points ?? []).flatMap(mp =>
-      (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs)
-    );
-    const worst = meas.reduce((w, m) => ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal');
-    return { ...comp, worst, hasMeasurements: meas.length > 0 };
-  });
-
-  const allCurrentMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp =>
-    (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs)
-  ));
-  const overallWorst = allCurrentMeas.reduce((w, m) =>
-    ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal'
+  const allMeas = components.flatMap(c =>
+    (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? [])
   );
-  const overallCfg = A(overallWorst);
-  const allHistoricalMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
 
-  // No data state
-  if (allHistoricalMeas.length === 0) {
-    return (
-      <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-16 text-gray-400">
-        <ClipboardList size={32} className="opacity-30 mb-3" />
-        <p className="text-sm font-medium">No measurement data</p>
-        <p className="text-xs mt-1">Upload a UAS file to populate health data</p>
-      </div>
-    );
+  // Group measurements by date → one timeline entry per unique date
+  const byDate = new Map<string, { worstLevel: string; totalCount: number; nonNormalCount: number; breakdown: Record<string, number> }>();
+  for (const m of allMeas) {
+    const date = m.measured_at.slice(0, 10);
+    const existing = byDate.get(date) ?? { worstLevel: 'Normal', totalCount: 0, nonNormalCount: 0, breakdown: { Danger: 0, Warning: 0, Alert: 0, Normal: 0 } };
+    existing.totalCount++;
+    existing.breakdown[m.alarm_level] = (existing.breakdown[m.alarm_level] ?? 0) + 1;
+    if (m.alarm_level !== 'Normal') existing.nonNormalCount++;
+    if (ALARM_RANK[m.alarm_level] > ALARM_RANK[existing.worstLevel]) existing.worstLevel = m.alarm_level;
+    byDate.set(date, existing);
   }
 
+  // Find the most recent replacement date (if any) to determine archived boundary
+  const replacementNote = notes.find(n => n.note_type === 'replacement');
+  const replacedDate = replacementNote
+    ? ((replacementNote.metadata?.replaced_at as string | null) ?? replacementNote.created_at).slice(0, 10)
+    : null;
+
+  const entries: HealthTimelineEntry[] = [
+    ...Array.from(byDate.entries()).map(([date, d]) => ({ kind: 'measurement' as const, date, ...d })),
+    ...notes.map(n => ({ kind: 'activity' as const, date: n.created_at.slice(0, 10), noteType: n.note_type, message: n.message, id: n.id })),
+  ].sort((a, b) => b.date.localeCompare(a.date));
+
+  const noData = allMeas.length === 0 && notes.length === 0;
+
+  // A measurement entry is archived if it falls on or before the replacement date
+  const isArchived = (entry: HealthTimelineEntry) =>
+    replacedDate !== null &&
+    entry.kind === 'measurement' &&
+    entry.date <= replacedDate;
+
+  const dash = (v: string | null | undefined) => v || '—';
+  const infoFields = [
+    { label: 'Asset Type',    value: dash(info?.asset_type) },
+    { label: 'Manufacturer',  value: dash(info?.manufacturer) },
+    { label: 'Model',         value: dash(info?.model) },
+    { label: 'Serial Number', value: dash(info?.serial_number) },
+    { label: 'Installed',     value: fmtDate(info?.installation_date ?? null) },
+    { label: 'Status',        value: info?.status ?? 'active', isStatus: true },
+  ];
+
+  const dotColor = (level: string) =>
+    level === 'Danger' ? 'bg-red-500' :
+    level === 'Warning' ? 'bg-orange-500' :
+    level === 'Alert' ? 'bg-blue-400' :
+    'bg-green-500';
+
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,600px)_340px] gap-8 items-start justify-center mx-auto w-full">
 
-      {/* Overall health banner */}
-      {/* Replacement notice */}
-      {lastReplacedAt && (
-        <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3 flex items-center gap-3 text-xs text-orange-700">
-          <Wrench size={14} className="shrink-0" />
-          <span>Asset replaced on <span className="font-semibold">{fmtDate(lastReplacedAt)}</span> — showing current measurements only. Archived data is below.</span>
-        </div>
-      )}
+      {/* ── Left: Timeline ── */}
+      <div>
+        {noData ? (
+          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+            <ClipboardList size={36} className="opacity-30 mb-3" />
+            <p className="text-sm font-medium">No data yet</p>
+            <p className="text-xs mt-1">Upload a UAS file to populate the timeline</p>
+          </div>
+        ) : (
+          <div className="relative">
+            {/* Vertical spine */}
+            <div className="absolute left-[9px] top-4 bottom-4 w-0.5 bg-gray-200" />
 
-      {/* Current health banner */}
-      {allCurrentMeas.length === 0 && lastReplacedAt ? (
-        <div className="bg-blue-50 rounded-xl border border-blue-200 p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-full bg-blue-400 flex items-center justify-center shrink-0">
-            <ClipboardList size={20} className="text-white" />
-          </div>
-          <div>
-            <p className="text-sm font-bold text-blue-800">Awaiting First Measurement</p>
-            <p className="text-xs text-blue-600 mt-0.5">No measurements recorded since replacement on {fmtDate(lastReplacedAt)}</p>
-          </div>
-        </div>
-      ) : isHealthy ? (
-        <div className="bg-green-50 rounded-xl border border-green-200 p-5 flex items-center gap-4">
-          <div className="w-11 h-11 rounded-full bg-green-500 flex items-center justify-center shrink-0">
-            <CheckCircle2 size={22} className="text-white" />
-          </div>
-          <div>
-            <p className="text-sm font-bold text-green-800">All Clear — Equipment is Healthy</p>
-            <p className="text-xs text-green-600 mt-0.5">
-              {totalPts} measurement point{totalPts !== 1 ? 's' : ''} reading Normal · No issues detected
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className={`rounded-xl border p-5 flex items-center gap-4 ${overallCfg.bg} border-current`}>
-          <div className={`w-11 h-11 rounded-full flex items-center justify-center shrink-0 ${overallCfg.bar}`}>
-            <span className="text-white">{ALARM_ICON[overallWorst]}</span>
-          </div>
-          <div>
-            <p className={`text-sm font-bold ${overallCfg.text}`}>
-              {overallWorst} — Attention Required
-            </p>
-            <p className={`text-xs mt-0.5 ${overallCfg.text} opacity-80`}>
-              {currentFindings.length} active finding{currentFindings.length !== 1 ? 's' : ''} across {totalPts} measurement point{totalPts !== 1 ? 's' : ''}
-            </p>
-          </div>
-        </div>
-      )}
+            <div className="space-y-0">
+              {entries.map((entry) => {
+                const archived = isArchived(entry);
+                return (
+                  <div
+                    key={entry.kind === 'activity' ? entry.id : `meas-${entry.date}`}
+                    className={`relative flex items-start gap-6 pb-10 ${archived ? 'opacity-40' : ''}`}
+                  >
+                    {/* Dot / square node */}
+                    {entry.kind === 'measurement' ? (
+                      <div className={`relative z-10 w-5 h-5 mt-0.5 rounded-full shrink-0 ring-4 ring-[#eef2f7] ${archived ? 'bg-gray-400' : dotColor(entry.worstLevel)}`} />
+                    ) : (
+                      <div className="relative z-10 w-5 h-5 mt-0.5 rounded-sm shrink-0 ring-4 ring-[#eef2f7] bg-white border-2 border-gray-400" />
+                    )}
 
-      {/* Component health breakdown */}
-      {components.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50">
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Component Health</p>
-          </div>
-          <div className="divide-y divide-gray-50">
-            {componentHealth.map(comp => {
-              const cfg    = A(comp.worst);
-              const mpCount = comp.measurement_points?.length ?? 0;
-              const issueCount = (comp.measurement_points ?? [])
-                .flatMap(mp => mp.measurements ?? [])
-                .filter(m => m.alarm_level !== 'Normal').length;
-              return (
-                <div key={comp.id} className="px-5 py-3.5 flex items-center gap-3">
-                  <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${cfg.dot}`} />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-gray-800">{comp.name}</p>
-                    <p className="text-xs text-gray-400">
-                      {mpCount} point{mpCount !== 1 ? 's' : ''}
-                      {issueCount > 0 ? ` · ${issueCount} issue${issueCount !== 1 ? 's' : ''}` : ''}
-                    </p>
+                    {/* Text */}
+                    <div className="flex-1 min-w-0 -mt-0.5">
+                      {entry.kind === 'measurement' ? (
+                        <>
+                          <div className="flex items-center gap-2.5">
+                            <p className={`text-lg font-bold leading-tight ${archived ? 'text-gray-400' : 'text-gray-900'}`}>{fmtDate(entry.date)}</p>
+                            {archived && <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">Archived</span>}
+                          </div>
+                          {!archived && entry.nonNormalCount > 0 ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              {(['Danger', 'Warning', 'Alert'] as const).map(l =>
+                                entry.breakdown[l] > 0 ? (
+                                  <span key={l} className={`text-sm font-semibold px-3 py-0.5 rounded-full ${
+                                    l === 'Danger'  ? 'bg-red-100 text-red-700' :
+                                    l === 'Warning' ? 'bg-orange-100 text-orange-700' :
+                                    'bg-blue-100 text-blue-700'
+                                  }`}>
+                                    {entry.breakdown[l]} {l}
+                                  </span>
+                                ) : null
+                              )}
+                              {entry.breakdown['Normal'] > 0 && (
+                                <span className="text-sm text-gray-400 self-center">{entry.breakdown['Normal']} Normal</span>
+                              )}
+                            </div>
+                          ) : !archived ? (
+                            <p className="text-sm text-green-600 font-medium mt-1.5">{entry.totalCount} readings — All Normal</p>
+                          ) : (
+                            <p className="text-sm text-gray-400 mt-1.5">{entry.totalCount} readings — prior to replacement</p>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-lg font-bold text-gray-900 leading-tight">
+                            {entry.noteType === 'replacement'   ? 'Asset Replaced' :
+                             entry.noteType === 'status_change' ? 'Status Changed' : 'Note'}
+                          </p>
+                          <p className="text-sm text-gray-500 mt-1.5">
+                            {fmtDate(entry.date)}{entry.message ? ` · ${entry.message}` : ''}
+                          </p>
+                        </>
+                      )}
+                    </div>
                   </div>
-                  <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full ${cfg.badge}`}>
-                    {ALARM_ICON[comp.worst]}
-                    {comp.worst}
-                  </span>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Active findings list */}
-      {currentFindings.length > 0 && (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-            <p className="text-xs font-bold uppercase tracking-wide text-gray-500">Active Findings</p>
-            <span className="text-xs font-semibold text-gray-400">{currentFindings.length} total</span>
+      {/* ── Right: Asset image + info ── */}
+      <div className="space-y-4 sticky top-4">
+        {/* Image */}
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+          {info?.image_url ? (
+            <img src={info.image_url} alt={info.tag ?? ''} className="w-full object-contain max-h-72 p-6" />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-64 bg-gray-50 text-gray-300">
+              <Wrench size={48} />
+              <p className="text-sm mt-3 font-medium">No image uploaded</p>
+            </div>
+          )}
+        </div>
+
+        {/* Info fields */}
+        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+          <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50">
+            <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Asset Info</p>
           </div>
           <div className="divide-y divide-gray-100">
-            {currentFindings.map(f => {
-              const cfg = A(f.alarmLevel);
-              return (
-                <div key={f.id} className="px-5 py-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>
-                          {ALARM_ICON[f.alarmLevel]}
-                          {f.alarmLevel}
-                        </span>
-                        <span className="text-[11px] font-semibold px-2 py-0.5 rounded bg-cyan-50 text-cyan-600">ultrasound</span>
-                      </div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {f.alarmLevel} condition at <span className="font-semibold">{f.pointName}</span>
-                      </p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {f.componentName} · RMS: {fmt(f.overallRms)} · Peak: {fmt(f.peak)}
-                      </p>
-                    </div>
-                    <span className="text-xs text-gray-400 shrink-0 mt-0.5 whitespace-nowrap">{fmtDate(f.measuredAt)}</span>
-                  </div>
-                </div>
-              );
-            })}
+            {infoFields.map(f => (
+              <div key={f.label} className="px-5 py-3.5 flex items-center justify-between gap-4">
+                <p className="text-sm font-medium text-gray-400 shrink-0">{f.label}</p>
+                {f.isStatus ? (
+                  <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+                    f.value === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+                  }`}>{f.value}</span>
+                ) : (
+                  <p className="text-sm font-semibold text-gray-800 text-right truncate">{f.value}</p>
+                )}
+              </div>
+            ))}
           </div>
         </div>
-      )}
-
-      {/* Archived findings (pre-replacement) */}
-      {archivedFindings.length > 0 && (
-        <div className="rounded-xl border border-gray-200 overflow-hidden opacity-60">
-          <div className="px-5 py-3 border-b border-gray-200 bg-gray-100 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold uppercase tracking-wide text-gray-400">Archived — Prior to Replacement</span>
-            </div>
-            <span className="text-xs text-gray-400">{archivedFindings.length} findings</span>
-          </div>
-          <div className="divide-y divide-gray-100 bg-gray-50">
-            {archivedFindings.map(f => {
-              const cfg = A(f.alarmLevel);
-              return (
-                <div key={f.id} className="px-5 py-3.5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded ${cfg.badge}`}>
-                          {ALARM_ICON[f.alarmLevel]}
-                          {f.alarmLevel}
-                        </span>
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded bg-gray-200 text-gray-500">archived</span>
-                      </div>
-                      <p className="text-sm text-gray-600">
-                        {f.alarmLevel} at <span className="font-medium">{f.pointName}</span>
-                      </p>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {f.componentName} · RMS: {fmt(f.overallRms)} · Peak: {fmt(f.peak)}
-                      </p>
-                    </div>
-                    <span className="text-xs text-gray-400 shrink-0 mt-0.5 whitespace-nowrap">{fmtDate(f.measuredAt)}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      </div>
 
     </div>
   );
@@ -1371,7 +1335,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
             </div>
           )}
           {activeTab === 'asset-health' && (
-            <AssetHealthTab findings={findings} components={components} lastReplacedAt={info?.last_replaced_at ?? null} />
+            <AssetHealthTab components={components} notes={notes} info={info} />
           )}
           {activeTab === 'workorders'   && <WorkOrdersTab />}
           {activeTab === 'kpis' && (

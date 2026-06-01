@@ -9,7 +9,7 @@ const en = {
       dashboard: 'Dashboard',
       assets: 'Assets',
       workOrders: 'Work Orders',
-      inspections: 'Inspections',
+      inspections: 'Findings',
       pmCalendar: 'PM Calendar',
       reports: 'Reports',
       ultrasound: 'Ultrasound',

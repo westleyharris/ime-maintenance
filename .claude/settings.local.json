@@ -20,7 +20,10 @@
       "mcp__849c9b65-ff37-4e53-8154-490e5db68428__list_projects",
       "mcp__849c9b65-ff37-4e53-8154-490e5db68428__list_tables",
       "mcp__849c9b65-ff37-4e53-8154-490e5db68428__execute_sql",
-      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__apply_migration"
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__apply_migration",
+      "Bash(node -e \"require\\('./node_modules/jspdf/dist/jspdf.umd.js'\\); console.log\\('jspdf ok'\\)\")",
+      "Bash(find /Users/westleyharris/Desktop/Projects/ime_toolbox/templates -type f 2>/dev/null | head -20)",
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__get_project"
     ]
   }
 }

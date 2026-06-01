@@ -8,7 +8,7 @@ const es = {
       dashboard: 'Tablero',
       assets: 'Activos',
       workOrders: 'Órdenes de Trabajo',
-      inspections: 'Inspecciones',
+      inspections: 'Hallazgos',
       pmCalendar: 'Calendario PM',
       reports: 'Reportes',
       ultrasound: 'Ultrasonido',
