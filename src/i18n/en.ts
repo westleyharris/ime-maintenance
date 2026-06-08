@@ -53,7 +53,7 @@ const en = {
       bulkPrintQR: 'Bulk Print QR Labels',
       addAsset: 'Add Asset',
       site: 'Site',
-      plant: 'Plant',
+      plant: 'Line',
       system: 'System',
       equipment: 'Equipment',
       component: 'Component',

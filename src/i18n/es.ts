@@ -49,7 +49,7 @@ const es = {
       bulkPrintQR: 'Imprimir QR en Lote',
       addAsset: 'Agregar Activo',
       site: 'Sitio',
-      plant: 'Planta',
+      plant: 'Línea',
       system: 'Sistema',
       equipment: 'Equipo',
       component: 'Componente',

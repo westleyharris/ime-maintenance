@@ -54,6 +54,7 @@ interface FlatRow {
   crestFactor: number | null;
   alarmLevel: string;
   measuredAt: string;
+  deltaRms: number | null;
 }
 
 interface EquipmentGroup {
@@ -90,6 +91,7 @@ function flatten(m: MeasurementRow): FlatRow | null {
     crestFactor: m.crest_factor,
     alarmLevel: m.alarm_level,
     measuredAt: m.measured_at,
+    deltaRms: null,
   };
 }
 
@@ -298,6 +300,7 @@ export default function Ultrasound() {
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   const [filterAlarm, setFilterAlarm] = useState('');
+  const [filterLine, setFilterLine] = useState('');
   const [filterSection, setFilterSection] = useState('');
   const [search, setSearch] = useState('');
   const [selectedPoint, setSelectedPoint] = useState<{ id: string; name: string; equipmentTag: string } | null>(null);
@@ -334,7 +337,29 @@ export default function Ultrasound() {
     }
 
     const { data, error } = await query;
-    if (!error && data) setRows((data as unknown as MeasurementRow[]).map(flatten).filter((r): r is FlatRow => r !== null));
+    if (!error && data) {
+      const allFlat = (data as unknown as MeasurementRow[]).map(flatten).filter((r): r is FlatRow => r !== null);
+
+      // Group by measurement point, sort each group newest→oldest, compute delta
+      const byPoint = new Map<string, FlatRow[]>();
+      for (const r of allFlat) {
+        if (!byPoint.has(r.measurementPointId)) byPoint.set(r.measurementPointId, []);
+        byPoint.get(r.measurementPointId)!.push(r);
+      }
+      const deduped: FlatRow[] = [];
+      for (const pts of byPoint.values()) {
+        pts.sort((a, b) => b.measuredAt.localeCompare(a.measuredAt));
+        const latest = pts[0];
+        const prev   = pts[1];
+        deduped.push({
+          ...latest,
+          deltaRms: (latest.overallRms != null && prev?.overallRms != null)
+            ? latest.overallRms - prev.overallRms
+            : null,
+        });
+      }
+      setRows(deduped);
+    }
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
 
@@ -364,12 +389,13 @@ export default function Ultrasound() {
 
   // ── Derived ─────────────────────────────────────────────────────────────────
 
+  const lines    = [...new Set(rows.map(r => r.line))].sort();
   const sections = [...new Set(rows.map(r => r.section))].sort();
-  const maxRms = Math.max(...rows.map(r => r.overallRms ?? 0), 1);
 
   const filtered = rows.filter(r => {
-    if (filterAlarm && r.alarmLevel !== filterAlarm) return false;
-    if (filterSection && r.section !== filterSection) return false;
+    if (filterAlarm   && r.alarmLevel !== filterAlarm)   return false;
+    if (filterLine    && r.line       !== filterLine)    return false;
+    if (filterSection && r.section    !== filterSection) return false;
     if (search) {
       const q = search.toLowerCase();
       return r.equipmentTag.toLowerCase().includes(q) || r.component.toLowerCase().includes(q) || r.point.toLowerCase().includes(q);
@@ -385,8 +411,6 @@ export default function Ultrasound() {
     Alert:   rows.filter(r => r.alarmLevel === 'Alert').length,
     Normal:  rows.filter(r => r.alarmLevel === 'Normal').length,
   };
-
-  const criticalGroups = groupByEquipment(rows).filter(g => g.worstAlarm === 'Danger' || g.worstAlarm === 'Warning').slice(0, 4);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -464,47 +488,22 @@ export default function Ultrasound() {
             })}
           </div>
 
-          {/* Critical equipment spotlight */}
-          {criticalGroups.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Activity size={14} className="text-red-500" />
-                <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wide">Needs Attention</h2>
-                <span className="text-xs text-gray-400">— highest severity equipment</span>
-              </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {criticalGroups.map(g => {
-                  const cfg = A(g.worstAlarm);
-                  const barPct = Math.round((g.worstRms / maxRms) * 100);
-                  return (
-                    <div key={g.tag} className={`rounded-lg border-l-4 p-3 ${cfg.bg} ${cfg.border.replace('border-', 'border-l-')}`}>
-                      <p className="text-xs font-bold text-gray-800 truncate">{g.tag}</p>
-                      <p className="text-[10px] text-gray-400 truncate mb-2">{g.line} · {g.section}</p>
-                      <div className="w-full bg-white/60 rounded-full h-1.5 mb-1">
-                        <div className={`h-1.5 rounded-full ${cfg.bar}`} style={{ width: `${barPct}%` }} />
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] text-gray-500">RMS {g.worstRms.toFixed(2)}</span>
-                        <span className={`text-[10px] font-bold ${cfg.text}`}>{g.worstAlarm}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
           {/* Filters */}
           <div className="flex items-center gap-3 flex-wrap">
             <input type="text" placeholder="Search equipment, component, point…" value={search} onChange={e => setSearch(e.target.value)}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm w-72 focus:outline-none focus:ring-2 focus:ring-primary/30" />
+            <select value={filterLine} onChange={e => setFilterLine(e.target.value)}
+              className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+              <option value="">All Lines</option>
+              {lines.map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
             <select value={filterSection} onChange={e => setFilterSection(e.target.value)}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
-              <option value="">All Sections</option>
+              <option value="">All Systems</option>
               {sections.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            {(filterAlarm || filterSection || search) && (
-              <button onClick={() => { setFilterAlarm(''); setFilterSection(''); setSearch(''); }} className="text-xs text-primary hover:underline">
+            {(filterAlarm || filterLine || filterSection || search) && (
+              <button onClick={() => { setFilterAlarm(''); setFilterLine(''); setFilterSection(''); setSearch(''); }} className="text-xs text-primary hover:underline">
                 Clear filters
               </button>
             )}
@@ -549,27 +548,31 @@ export default function Ultrasound() {
                   <div className="divide-y divide-gray-50">
                     {g.points.map(r => {
                       const pcfg = A(r.alarmLevel);
-                      const barPct = r.overallRms != null ? Math.round((r.overallRms / maxRms) * 100) : 0;
                       return (
                         <div key={r.id}
-                          className="flex items-center gap-2 md:gap-4 px-3 md:px-4 py-2.5 bg-white hover:bg-blue-50/40 cursor-pointer transition-colors"
+                          className="flex items-center gap-3 md:gap-4 px-4 py-2.5 bg-white hover:bg-blue-50/40 cursor-pointer transition-colors"
                           onClick={() => setSelectedPoint({ id: r.measurementPointId, name: r.point, equipmentTag: g.tag })}>
-                          {/* Point name */}
-                          <div className="w-48 shrink-0">
+                          {/* Point name + component */}
+                          <div className="w-44 shrink-0">
                             <p className="text-xs font-semibold text-gray-700 truncate">{r.point}</p>
                             <p className="text-[10px] text-gray-400 truncate">{r.component}</p>
                           </div>
 
-                          {/* RMS bar */}
-                          <div className="flex-1 flex items-center gap-2 min-w-0">
-                            <div className="flex-1 bg-gray-100 rounded-full h-2">
-                              <div className={`h-2 rounded-full transition-all ${pcfg.bar}`} style={{ width: `${barPct}%` }} />
+                          {/* RMS + delta */}
+                          <div className="shrink-0 text-right">
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wide">RMS</p>
+                            <div className="flex items-center gap-1.5 justify-end">
+                              <p className="text-xs font-mono font-semibold text-gray-700">{fmt(r.overallRms)}</p>
+                              {r.deltaRms != null && (
+                                <span className={`text-[10px] font-semibold ${r.deltaRms > 0 ? 'text-red-500' : r.deltaRms < 0 ? 'text-green-600' : 'text-gray-400'}`}>
+                                  {r.deltaRms > 0 ? '▲' : r.deltaRms < 0 ? '▼' : '—'}{Math.abs(r.deltaRms).toFixed(2)}
+                                </span>
+                              )}
                             </div>
-                            <span className="text-xs font-mono text-gray-600 w-12 text-right shrink-0">{fmt(r.overallRms)}</span>
                           </div>
 
-                          {/* Stats */}
-                          <div className="hidden lg:flex items-center gap-5 shrink-0 text-xs text-gray-500 font-mono">
+                          {/* Other metrics */}
+                          <div className="hidden lg:flex items-center gap-4 flex-1 shrink-0 text-xs text-gray-500 font-mono">
                             <span title="Max RMS"><span className="text-gray-300 mr-1">max</span>{fmt(r.maxRms)}</span>
                             <span title="Peak"><span className="text-gray-300 mr-1">pk</span>{fmt(r.peak)}</span>
                             <span title="Crest Factor"><span className="text-gray-300 mr-1">cf</span>{fmt(r.crestFactor)}</span>
@@ -583,10 +586,10 @@ export default function Ultrasound() {
                             </span>
                           </div>
 
-                          {/* Date + trend hint */}
+                          {/* Date */}
                           <div className="shrink-0 hidden xl:flex items-center gap-2 w-28 justify-end">
                             <span className="text-[10px] text-gray-300">{fmtDate(r.measuredAt)}</span>
-                            <TrendingUp size={12} className="text-gray-200 group-hover:text-primary transition-colors" />
+                            <TrendingUp size={12} className="text-gray-200" />
                           </div>
                         </div>
                       );

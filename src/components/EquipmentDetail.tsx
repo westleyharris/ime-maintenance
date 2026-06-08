@@ -230,8 +230,28 @@ function OverviewTab({ info, onImageUpload, uploading, isCompliant }: {
 
 // ── Asset Health tab ──────────────────────────────────────────────────────────
 
+interface PointDetail {
+  pointName: string;
+  alarmLevel: string;
+  overallRms: number | null;
+  peak: number | null;
+}
+
+interface ComponentDetail {
+  componentName: string;
+  points: PointDetail[];
+}
+
+interface DateBucket {
+  worstLevel: string;
+  totalCount: number;
+  nonNormalCount: number;
+  breakdown: Record<string, number>;
+  componentDetails: ComponentDetail[];
+}
+
 type HealthTimelineEntry =
-  | { kind: 'measurement'; date: string; worstLevel: string; totalCount: number; nonNormalCount: number; breakdown: Record<string, number> }
+  | { kind: 'measurement'; date: string } & DateBucket
   | { kind: 'activity'; date: string; noteType: string; message: string | null; id: string };
 
 function AssetHealthTab({ components, notes, info }: {
@@ -239,21 +259,44 @@ function AssetHealthTab({ components, notes, info }: {
   notes: EquipmentNote[];
   info: EquipmentInfo | null;
 }) {
-  const allMeas = components.flatMap(c =>
-    (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? [])
-  );
+  // Build per-date buckets with full component/point detail
+  const byDate = new Map<string, DateBucket>();
 
-  // Group measurements by date → one timeline entry per unique date
-  const byDate = new Map<string, { worstLevel: string; totalCount: number; nonNormalCount: number; breakdown: Record<string, number> }>();
-  for (const m of allMeas) {
-    const date = m.measured_at.slice(0, 10);
-    const existing = byDate.get(date) ?? { worstLevel: 'Normal', totalCount: 0, nonNormalCount: 0, breakdown: { Danger: 0, Warning: 0, Alert: 0, Normal: 0 } };
-    existing.totalCount++;
-    existing.breakdown[m.alarm_level] = (existing.breakdown[m.alarm_level] ?? 0) + 1;
-    if (m.alarm_level !== 'Normal') existing.nonNormalCount++;
-    if (ALARM_RANK[m.alarm_level] > ALARM_RANK[existing.worstLevel]) existing.worstLevel = m.alarm_level;
-    byDate.set(date, existing);
+  for (const comp of components) {
+    for (const mp of (comp.measurement_points ?? [])) {
+      for (const m of (mp.measurements ?? [])) {
+        const date = m.measured_at.slice(0, 10);
+        if (!byDate.has(date)) {
+          byDate.set(date, {
+            worstLevel: 'Normal',
+            totalCount: 0,
+            nonNormalCount: 0,
+            breakdown: { Danger: 0, Warning: 0, Alert: 0, Normal: 0 },
+            componentDetails: [],
+          });
+        }
+        const bucket = byDate.get(date)!;
+        bucket.totalCount++;
+        bucket.breakdown[m.alarm_level] = (bucket.breakdown[m.alarm_level] ?? 0) + 1;
+        if (m.alarm_level !== 'Normal') bucket.nonNormalCount++;
+        if (ALARM_RANK[m.alarm_level] > ALARM_RANK[bucket.worstLevel]) bucket.worstLevel = m.alarm_level;
+
+        let compDetail = bucket.componentDetails.find(cd => cd.componentName === comp.name);
+        if (!compDetail) {
+          compDetail = { componentName: comp.name, points: [] };
+          bucket.componentDetails.push(compDetail);
+        }
+        compDetail.points.push({
+          pointName: mp.name,
+          alarmLevel: m.alarm_level,
+          overallRms: m.overall_rms,
+          peak: m.peak,
+        });
+      }
+    }
   }
+
+  const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
 
   // Find the most recent replacement date (if any) to determine archived boundary
   const replacementNote = notes.find(n => n.note_type === 'replacement');
@@ -261,12 +304,42 @@ function AssetHealthTab({ components, notes, info }: {
     ? ((replacementNote.metadata?.replaced_at as string | null) ?? replacementNote.created_at).slice(0, 10)
     : null;
 
-  const entries: HealthTimelineEntry[] = [
+  const allEntries: HealthTimelineEntry[] = [
     ...Array.from(byDate.entries()).map(([date, d]) => ({ kind: 'measurement' as const, date, ...d })),
     ...notes.map(n => ({ kind: 'activity' as const, date: n.created_at.slice(0, 10), noteType: n.note_type, message: n.message, id: n.id })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
   const noData = allMeas.length === 0 && notes.length === 0;
+
+  // Infinite scroll state
+  const INITIAL_COUNT = 6;
+  const PAGE_SIZE = 6;
+  const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setVisibleCount(INITIAL_COUNT);
+  }, [allEntries.length]);
+
+  useEffect(() => {
+    const el = sentinelRef.current;
+    const root = scrollContainerRef.current;
+    if (!el || !root) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0].isIntersecting) {
+          setVisibleCount(v => Math.min(v + PAGE_SIZE, allEntries.length));
+        }
+      },
+      { root, threshold: 0.1 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [allEntries.length]);
+
+  const entries = allEntries.slice(0, visibleCount);
+  const hasMore = visibleCount < allEntries.length;
 
   // A measurement entry is archived if it falls on or before the replacement date
   const isArchived = (entry: HealthTimelineEntry) =>
@@ -290,8 +363,25 @@ function AssetHealthTab({ components, notes, info }: {
     level === 'Alert' ? 'bg-blue-400' :
     'bg-green-500';
 
+  // ── KPI computations (post-replacement only) ──────────────────────────────
+  const replacedTs = info?.last_replaced_at ? new Date(info.last_replaced_at).getTime() : null;
+  const kpiMeas = allMeas.filter(m => !replacedTs || new Date(m.measured_at + 'T12:00:00').getTime() > replacedTs);
+  const kpiTotal    = kpiMeas.length;
+  const kpiDanger   = kpiMeas.filter(m => m.alarm_level === 'Danger').length;
+  const kpiWarning  = kpiMeas.filter(m => m.alarm_level === 'Warning').length;
+  const kpiAlert    = kpiMeas.filter(m => m.alarm_level === 'Alert').length;
+  const kpiNormal   = kpiMeas.filter(m => m.alarm_level === 'Normal').length;
+  const kpiCritical = kpiDanger + kpiWarning;
+
+  const kpiBreakdown = [
+    { label: 'Danger',  count: kpiDanger,  cfg: A('Danger')  },
+    { label: 'Warning', count: kpiWarning, cfg: A('Warning') },
+    { label: 'Alert',   count: kpiAlert,   cfg: A('Alert')   },
+    { label: 'Normal',  count: kpiNormal,  cfg: A('Normal')  },
+  ];
+
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,600px)_340px] gap-8 items-start justify-center mx-auto w-full">
+    <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,580px)] gap-8 items-start w-full">
 
       {/* ── Left: Timeline ── */}
       <div>
@@ -302,6 +392,10 @@ function AssetHealthTab({ components, notes, info }: {
             <p className="text-xs mt-1">Upload a UAS file to populate the timeline</p>
           </div>
         ) : (
+          <div
+            ref={scrollContainerRef}
+            className="overflow-y-auto h-[calc(100vh-280px)] pr-2"
+          >
           <div className="relative">
             {/* Vertical spine */}
             <div className="absolute left-[9px] top-4 bottom-4 w-0.5 bg-gray-200" />
@@ -329,6 +423,8 @@ function AssetHealthTab({ components, notes, info }: {
                             <p className={`text-lg font-bold leading-tight ${archived ? 'text-gray-400' : 'text-gray-900'}`}>{fmtDate(entry.date)}</p>
                             {archived && <span className="text-[9px] font-bold uppercase tracking-widest text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">Archived</span>}
                           </div>
+
+                          {/* Alarm summary badges */}
                           {!archived && entry.nonNormalCount > 0 ? (
                             <div className="mt-2 flex flex-wrap gap-2">
                               {(['Danger', 'Warning', 'Alert'] as const).map(l =>
@@ -351,6 +447,45 @@ function AssetHealthTab({ components, notes, info }: {
                           ) : (
                             <p className="text-sm text-gray-400 mt-1.5">{entry.totalCount} readings — prior to replacement</p>
                           )}
+
+                          {/* Component / point breakdown (non-archived only) */}
+                          {!archived && entry.componentDetails.length > 0 && (
+                            <div className="mt-3 rounded-xl border border-gray-100 overflow-hidden">
+                              {entry.componentDetails.map((cd, ci) => {
+                                const sorted = [...cd.points].sort(
+                                  (a, b) => ALARM_RANK[b.alarmLevel] - ALARM_RANK[a.alarmLevel]
+                                );
+                                return (
+                                  <div key={cd.componentName} className={ci > 0 ? 'border-t border-gray-100' : ''}>
+                                    {/* Component header */}
+                                    <div className="px-3 py-1.5 bg-gray-50 flex items-center gap-2">
+                                      <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{cd.componentName}</span>
+                                      <span className="text-[10px] text-gray-300">· {cd.points.length} point{cd.points.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                    {/* Point rows */}
+                                    <div className="divide-y divide-gray-50">
+                                      {sorted.map((pt, pi) => (
+                                        <div key={pi} className="px-3 py-2 flex items-center justify-between gap-3">
+                                          <span className="text-sm font-medium text-gray-700 truncate">{pt.pointName}</span>
+                                          <div className="flex items-center gap-3 shrink-0">
+                                            {pt.overallRms != null && (
+                                              <span className="text-xs text-gray-400 tabular-nums">{pt.overallRms.toFixed(2)} RMS</span>
+                                            )}
+                                            {pt.peak != null && (
+                                              <span className="text-xs text-gray-300 tabular-nums">{pt.peak.toFixed(2)} pk</span>
+                                            )}
+                                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${A(pt.alarmLevel).badge}`}>
+                                              {pt.alarmLevel}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </>
                       ) : (
                         <>
@@ -367,45 +502,108 @@ function AssetHealthTab({ components, notes, info }: {
                   </div>
                 );
               })}
+
+              {/* Infinite scroll sentinel */}
+              {hasMore && (
+                <div ref={sentinelRef} className="flex items-center justify-center py-4 gap-2 text-gray-300">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span className="text-xs">Loading more…</span>
+                </div>
+              )}
+
+              {!hasMore && allEntries.length > INITIAL_COUNT && (
+                <p className="text-xs text-center text-gray-300 py-4">
+                  All {allEntries.length} entries shown
+                </p>
+              )}
             </div>
+          </div>
           </div>
         )}
       </div>
 
-      {/* ── Right: Asset image + info ── */}
+      {/* ── Right: Photo + Metrics (top row), Asset Info (full width below) ── */}
       <div className="space-y-4 sticky top-4">
-        {/* Image */}
-        <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
-          {info?.image_url ? (
-            <img src={info.image_url} alt={info.tag ?? ''} className="w-full object-contain max-h-72 p-6" />
-          ) : (
-            <div className="flex flex-col items-center justify-center h-64 bg-gray-50 text-gray-300">
-              <Wrench size={48} />
-              <p className="text-sm mt-3 font-medium">No image uploaded</p>
+
+        {/* Top row: Photo | Metrics side by side */}
+        <div className="grid grid-cols-2 gap-4 items-stretch">
+
+          {/* Asset photo */}
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm flex flex-col">
+            {info?.image_url ? (
+              <img src={info.image_url} alt={info.tag ?? ''} className="w-full h-full object-contain p-4" />
+            ) : (
+              <div className="flex flex-col items-center justify-center flex-1 bg-gray-50 text-gray-300">
+                <Wrench size={36} />
+                <p className="text-xs mt-2 font-medium">No image</p>
+              </div>
+            )}
+          </div>
+
+          {/* Metrics */}
+          <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
+            <div className="px-4 py-3 border-b border-gray-100 bg-gray-50">
+              <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Metrics</p>
             </div>
-          )}
+            <div className="p-3 space-y-3">
+              {/* Stat tiles */}
+              <div className="grid grid-cols-1 gap-2">
+                {[
+                  { label: 'Total Readings',  value: kpiTotal > 0 ? kpiTotal    : '—', sub: 'points'  },
+                  { label: 'Critical Points', value: kpiTotal > 0 ? kpiCritical : '—', sub: 'in alarm' },
+                  { label: 'WO Backlog',      value: '—',                               sub: 'open WOs' },
+                ].map(k => (
+                  <div key={k.label} className="bg-gray-50 rounded-xl px-3 py-2 flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-[9px] font-bold uppercase tracking-wide text-gray-400 leading-tight">{k.label}</p>
+                      <p className="text-[9px] text-gray-300 mt-0.5">{k.sub}</p>
+                    </div>
+                    <p className={`text-xl font-black leading-none ${typeof k.value === 'number' && k.value > 0 ? 'text-gray-900' : 'text-gray-300'}`}>
+                      {k.value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {/* Alarm breakdown bars */}
+              {kpiTotal > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  {kpiBreakdown.map(({ label, count, cfg }) => (
+                    <div key={label} className="flex items-center gap-1.5">
+                      <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${cfg.dot}`} />
+                      <span className="text-[10px] text-gray-500 w-12 shrink-0">{label}</span>
+                      <div className="flex-1 bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                        <div className={`h-full rounded-full ${cfg.bar}`} style={{ width: `${(count / kpiTotal) * 100}%` }} />
+                      </div>
+                      <span className="text-[10px] font-bold text-gray-700 w-4 text-right shrink-0">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
         </div>
 
-        {/* Info fields */}
+        {/* Asset Info — full width spanning both columns above */}
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden shadow-sm">
           <div className="px-5 py-3.5 border-b border-gray-100 bg-gray-50">
             <p className="text-xs font-bold uppercase tracking-widest text-gray-400">Asset Info</p>
           </div>
-          <div className="divide-y divide-gray-100">
+          <div className="grid grid-cols-2 divide-x divide-gray-100">
             {infoFields.map(f => (
-              <div key={f.label} className="px-5 py-3.5 flex items-center justify-between gap-4">
-                <p className="text-sm font-medium text-gray-400 shrink-0">{f.label}</p>
+              <div key={f.label} className="px-4 py-3 flex items-center justify-between gap-3">
+                <p className="text-xs font-medium text-gray-400 shrink-0">{f.label}</p>
                 {f.isStatus ? (
-                  <span className={`text-xs font-bold px-3 py-1 rounded-full ${
+                  <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${
                     f.value === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
                   }`}>{f.value}</span>
                 ) : (
-                  <p className="text-sm font-semibold text-gray-800 text-right truncate">{f.value}</p>
+                  <p className="text-xs font-semibold text-gray-800 text-right truncate">{f.value}</p>
                 )}
               </div>
             ))}
           </div>
         </div>
+
       </div>
 
     </div>
