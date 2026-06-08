@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, Activity, X, TrendingUp } from 'lucide-react';
+import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, X, TrendingUp } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
 import { importUASData, type ImportResult } from '../utils/uasImporter';
