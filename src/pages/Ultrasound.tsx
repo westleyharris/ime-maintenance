@@ -308,37 +308,53 @@ export default function Ultrasound() {
   const fetchData = useCallback(async () => {
     if (!selectedCompanyId) { setRows([]); setLoading(false); return; }
     setLoading(true);
-    let query = supabase
-      .from('measurements')
-      .select(`
-        id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at,
-        measurement_points (
-          id, name, sensor_model,
-          components (
-            name,
-            equipment (
-              tag,
-              sections (
-                uas_name,
-                lines (
-                  name,
-                  locations ( name )
+
+    // Page through ALL measurements — PostgREST caps a single response at 1000
+    // rows, and a location can have more than that, so without paging the
+    // dedup below would only see a truncated set and could miss the latest
+    // reading for some points.
+    const PAGE = 1000;
+    const all: MeasurementRow[] = [];
+    let pageError = false;
+    for (let from = 0; ; from += PAGE) {
+      let query = supabase
+        .from('measurements')
+        .select(`
+          id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measured_datetime,
+          measurement_points (
+            id, name, sensor_model,
+            components (
+              name,
+              equipment (
+                tag,
+                sections (
+                  uas_name,
+                  lines (
+                    name,
+                    locations ( name )
+                  )
                 )
               )
             )
           )
-        )
-      `)
-      .eq('company_id', selectedCompanyId)
-      .order('alarm_level');
+        `)
+        .eq('company_id', selectedCompanyId)
+        .order('measured_at', { ascending: false })
+        .range(from, from + PAGE - 1);
 
-    if (selectedLocationId) {
-      query = query.eq('location_id', selectedLocationId);
+      if (selectedLocationId) {
+        query = query.eq('location_id', selectedLocationId);
+      }
+
+      const { data, error } = await query;
+      if (error) { pageError = true; break; }
+      if (!data || data.length === 0) break;
+      all.push(...(data as unknown as MeasurementRow[]));
+      if (data.length < PAGE) break;
     }
 
-    const { data, error } = await query;
-    if (!error && data) {
-      const allFlat = (data as unknown as MeasurementRow[]).map(flatten).filter((r): r is FlatRow => r !== null);
+    if (!pageError) {
+      const allFlat = all.map(flatten).filter((r): r is FlatRow => r !== null);
 
       // Group by measurement point, sort each group newest→oldest, compute delta
       const byPoint = new Map<string, FlatRow[]>();
