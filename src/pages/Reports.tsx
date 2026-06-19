@@ -5,6 +5,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/fetchAll';
 import { useScope } from '../context/ScopeContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -501,25 +502,25 @@ export default function Reports() {
     if (!selectedCompanyId) { setRows([]); return; }
     setLoading(true);
 
-    let query = supabase
-      .from('measurements')
-      .select(`
-        id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measurement_point_id,
-        measurement_points (
-          name,
-          components (
+    const { rows: raw } = await fetchAllRows<MeasurementRow>((from, to) => {
+      let q = supabase
+        .from('measurements')
+        .select(`
+          id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measurement_point_id,
+          measurement_points (
             name,
-            equipment ( tag, sections ( uas_name, lines ( name ) ) )
+            components (
+              name,
+              equipment ( tag, sections ( uas_name, lines ( name ) ) )
+            )
           )
-        )
-      `)
-      .eq('company_id', selectedCompanyId)
-      .order('measured_at', { ascending: false });
-
-    if (selectedLocationId) query = query.eq('location_id', selectedLocationId);
-
-    const { data } = await query;
-    const raw = (data ?? []) as unknown as MeasurementRow[];
+        `)
+        .eq('company_id', selectedCompanyId)
+        .order('measured_at', { ascending: false })
+        .range(from, to);
+      if (selectedLocationId) q = q.eq('location_id', selectedLocationId);
+      return q as unknown as PromiseLike<{ data: MeasurementRow[] | null; error: unknown }>;
+    });
 
     const seen = new Set<string>();
     const flat: ReportRow[] = [];

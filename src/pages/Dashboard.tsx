@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X, CheckCircle2, Crosshair, Wrench } from 'lucide-react';
 import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/fetchAll';
 import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -9,6 +10,7 @@ import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 interface MeasurementRow {
   alarm_level: string;
   measured_at: string;
+  measurement_point_id: string;
   measurement_points: {
     name: string;
     components: {
@@ -240,30 +242,33 @@ export default function Dashboard() {
     if (!selectedCompanyId) { setRows([]); setLastReading(null); return; }
     setLoading(true);
 
-    let query = supabase
-      .from('measurements')
-      .select(`
-        alarm_level, measured_at,
-        measurement_points (
-          name,
-          components (
-            equipment (
-              tag, status,
-              sections ( uas_name, lines ( name ) )
+    const { rows: data, error } = await fetchAllRows<MeasurementRow>((from, to) => {
+      let q = supabase
+        .from('measurements')
+        .select(`
+          alarm_level, measured_at, measurement_point_id,
+          measurement_points (
+            name,
+            components (
+              equipment (
+                tag, status,
+                sections ( uas_name, lines ( name ) )
+              )
             )
           )
-        )
-      `)
-      .eq('company_id', selectedCompanyId)
-      .order('measured_at', { ascending: false });
+        `)
+        .eq('company_id', selectedCompanyId)
+        .order('measured_at', { ascending: false })
+        .range(from, to);
+      if (selectedLocationId) q = q.eq('location_id', selectedLocationId);
+      return q as unknown as PromiseLike<{ data: MeasurementRow[] | null; error: unknown }>;
+    });
 
-    if (selectedLocationId) query = query.eq('location_id', selectedLocationId);
-
-    const { data, error } = await query;
-
-    if (!error && data) {
-      const flat = (data as unknown as MeasurementRow[])
-        .filter(m => m.measurement_points)
+    if (!error) {
+      // Rows arrive newest-first; keep only the latest reading per point.
+      const seen = new Set<string>();
+      const flat = data
+        .filter(m => m.measurement_points && !seen.has(m.measurement_point_id) && seen.add(m.measurement_point_id))
         .map(m => ({
           alarmLevel:      m.alarm_level,
           measuredAt:      m.measured_at,
