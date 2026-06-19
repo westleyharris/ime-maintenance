@@ -269,12 +269,12 @@ export default function Assets() {
         <div className="flex items-center gap-3">
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
           <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={importing}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-primary text-primary text-sm font-medium hover:bg-blue-50 transition-colors disabled:opacity-60"
+            disabled={importing || true}
+            title="Excel import is disabled — the asset tree now syncs live from UAS3"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-200 text-gray-400 text-sm font-medium cursor-not-allowed"
           >
             {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
-            {importing ? 'Importing…' : 'Import Asset Tree'}
+            Import Asset Tree
           </button>
         </div>
       </div>

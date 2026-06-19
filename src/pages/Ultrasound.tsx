@@ -428,8 +428,9 @@ export default function Ultrasound() {
             <RefreshCw size={16} />
           </button>
           <input ref={fileInputRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
-          <button onClick={() => fileInputRef.current?.click()} disabled={importing}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light transition-colors disabled:opacity-60">
+          <button disabled={importing || true}
+            title="Excel import is disabled — measurements now sync live from UAS3"
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-gray-200 text-gray-400 text-sm font-semibold cursor-not-allowed">
             {importing ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
             {importing ? 'Importing…' : 'Import Measurements'}
           </button>

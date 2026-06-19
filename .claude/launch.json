@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dev",
+      "name": "IME Maintenance Dashboard",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 4000
+      "port": 4000,
+      "autoPort": false
     }
   ]
 }
