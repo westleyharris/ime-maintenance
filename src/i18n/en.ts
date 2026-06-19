@@ -57,6 +57,7 @@ const en = {
       system: 'System',
       equipment: 'Equipment',
       component: 'Component',
+      point: 'Point',
       importAssetTree: 'Import Asset Tree',
     },
     // Work Orders

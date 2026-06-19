@@ -17,7 +17,7 @@ export interface User {
 export interface AssetNode {
   id: string;
   name: string;
-  type: 'site' | 'plant' | 'system' | 'equipment' | 'component';
+  type: 'site' | 'plant' | 'system' | 'equipment' | 'component' | 'point';
   status: 'good' | 'warning' | 'critical';
   companyId: string;
   locationId?: string;

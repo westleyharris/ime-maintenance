@@ -53,6 +53,7 @@ const es = {
       system: 'Sistema',
       equipment: 'Equipo',
       component: 'Componente',
+      point: 'Punto',
       importAssetTree: 'Importar Árbol de Activos',
     },
     workOrders: {

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   ChevronDown, ChevronRight, Search,
   Building2, Factory, Settings2, Wrench, Upload, Cpu, Loader2,
-  MapPin, CheckCircle, AlertTriangle,
+  MapPin, CheckCircle, AlertTriangle, Gauge,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
@@ -19,6 +19,7 @@ const typeIcons: Record<string, typeof Building2> = {
   system: Settings2,
   equipment: Wrench,
   component: Cpu,
+  point: Gauge,
 };
 
 const typeColors: Record<string, string> = {
@@ -27,6 +28,7 @@ const typeColors: Record<string, string> = {
   system: 'text-orange-500',
   equipment: 'text-gray-500',
   component: 'text-purple-500',
+  point: 'text-teal-500',
 };
 
 const typeBadgeColors: Record<string, string> = {
@@ -35,6 +37,7 @@ const typeBadgeColors: Record<string, string> = {
   system: 'bg-orange-50 text-orange-700 border-orange-200',
   equipment: 'bg-gray-50 text-gray-700 border-gray-200',
   component: 'bg-purple-50 text-purple-700 border-purple-200',
+  point: 'bg-teal-50 text-teal-700 border-teal-200',
 };
 
 // ── Tree node component ───────────────────────────────────────────────────────
@@ -91,7 +94,8 @@ function AssetTreeNode({
 
 // ── Supabase shape ────────────────────────────────────────────────────────────
 
-interface DBComponent { id: string; name: string; }
+interface DBPoint     { id: string; name: string; sensor_model: string | null; }
+interface DBComponent { id: string; name: string; measurement_points: DBPoint[]; }
 interface DBEquipment { id: string; tag: string; components: DBComponent[]; }
 interface DBSection   { id: string; uas_name: string; equipment: DBEquipment[]; }
 interface DBLine      { id: string; name: string; sections: DBSection[]; }
@@ -137,6 +141,14 @@ function buildTree(
             status: 'good',
             companyId,
             locationId,
+            children: (comp.measurement_points ?? []).map(pt => ({
+              id: pt.id,
+              name: pt.sensor_model ? `${pt.name} · ${pt.sensor_model}` : pt.name,
+              type: 'point',
+              status: 'good',
+              companyId,
+              locationId,
+            })),
           })),
         })),
       })),
@@ -145,7 +157,7 @@ function buildTree(
 }
 
 function countNodes(node: AssetNode): Record<string, number> {
-  const counts: Record<string, number> = { site: 0, plant: 0, system: 0, equipment: 0, component: 0 };
+  const counts: Record<string, number> = { site: 0, plant: 0, system: 0, equipment: 0, component: 0, point: 0 };
   function walk(n: AssetNode) {
     counts[n.type] = (counts[n.type] || 0) + 1;
     n.children?.forEach(walk);
@@ -182,7 +194,10 @@ export default function Assets() {
           id, uas_name,
           equipment (
             id, tag,
-            components ( id, name )
+            components (
+              id, name,
+              measurement_points ( id, name, sensor_model )
+            )
           )
         )
       `)
@@ -338,6 +353,10 @@ export default function Assets() {
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
               <Cpu size={14} className="text-purple-500" />
               {t('assets.component', { defaultValue: 'Component' })} <span className="font-semibold text-gray-900 ml-1">{counts.component}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-sm text-gray-600">
+              <Gauge size={14} className="text-teal-500" />
+              {t('assets.point', { defaultValue: 'Point' })} <span className="font-semibold text-gray-900 ml-1">{counts.point}</span>
             </div>
           </div>
         )}
