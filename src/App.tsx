@@ -11,8 +11,7 @@ import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import Assets from './pages/Assets';
 import WorkOrders from './pages/WorkOrders';
-import Inspections from './pages/Inspections';
-import PMCalendar from './pages/PMCalendar';
+import Findings from './pages/Findings';
 import Reports from './pages/Reports';
 import Ultrasound from './pages/Ultrasound';
 import Admin from './pages/Admin';
@@ -35,8 +34,7 @@ export default function App() {
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/assets" element={<Assets />} />
                 <Route path="/work-orders" element={<WorkOrders />} />
-                <Route path="/inspections" element={<Inspections />} />
-                <Route path="/pm-calendar" element={<PMCalendar />} />
+                <Route path="/findings" element={<Findings />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/ultrasound" element={<Ultrasound />} />
                 <Route element={<RequireRole roles={['ime_admin']} />}>

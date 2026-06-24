@@ -2,7 +2,7 @@ import { NavLink } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import {
   LayoutDashboard, Building2, ClipboardList, Search,
-  Calendar, BarChart3, Waves, Shield, Settings,
+  BarChart3, Waves, Shield, Settings,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -32,8 +32,7 @@ export default function Sidebar() {
           </p>
           {[
             { to: '/work-orders', icon: ClipboardList, label: 'nav.workOrders' },
-            { to: '/inspections', icon: Search, label: 'nav.inspections' },
-            { to: '/pm-calendar', icon: Calendar, label: 'nav.pmCalendar' },
+            { to: '/findings', icon: Search, label: 'nav.inspections' },
           ].map(item => <SidebarLink key={item.to} {...item} t={t} />)}
         </div>
 

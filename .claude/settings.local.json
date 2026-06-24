@@ -31,7 +31,10 @@
       "Bash(python3 -c ' *)",
       "mcp__visualize__show_widget",
       "Bash(command -v pwsh)",
-      "Bash(xargs kill)"
+      "Bash(xargs kill)",
+      "Bash(wc -l src/pages/Findings.tsx src/pages/WorkOrders.tsx src/pages/PMCalendar.tsx)",
+      "Bash(grep -rn \"PMCalendar\\\\|Findings\\\\|WorkOrders\\\\|pm-calendar\\\\|findings\\\\|work-orders\\\\|Calendar\" src/App.tsx src/main.tsx)",
+      "Bash(grep -rln \"PMCalendar\\\\|PM Calendar\\\\|pm-calendar\\\\|Findings\\\\|WorkOrders\" src/components src/layouts)"
     ]
   }
 }

@@ -1,162 +1,257 @@
-import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Plus, Upload, Pencil, Trash2 } from 'lucide-react';
-import { workOrders } from '../data/mockData';
+import { useState, useEffect, useCallback } from 'react';
+import { Loader2, Trash2, Building2, ClipboardList } from 'lucide-react';
+import { supabase } from '../lib/supabase';
+import { useScope } from '../context/ScopeContext';
+import { useAuth } from '../context/AuthContext';
 
-const priorityColors: Record<string, string> = {
+type WOStatus = 'open' | 'in_progress' | 'closed' | 'cancelled';
+type Priority = 'low' | 'medium' | 'high' | 'critical';
+
+interface WORow {
+  id: string;
+  woNumber: string;
+  title: string | null;
+  description: string | null;
+  priority: Priority;
+  status: WOStatus;
+  assignee: string | null;
+  sapNo: string | null;
+  dueDate: string | null;
+  createdAt: string;
+  findingId: string | null;
+  equipment: string;
+  line: string;
+  findingCondition: string | null;
+  findingPoint: string | null;
+}
+
+interface RawWO {
+  id: string;
+  wo_number: string;
+  title: string | null;
+  description: string | null;
+  priority: Priority;
+  status: WOStatus;
+  assignee: string | null;
+  sap_no: string | null;
+  due_date: string | null;
+  created_at: string;
+  finding_id: string | null;
+  equipment: { tag: string; sections: { lines: { name: string } } | null } | null;
+}
+
+const PRIORITY_BADGE: Record<Priority, string> = {
   low: 'bg-blue-100 text-blue-700',
   medium: 'bg-yellow-100 text-yellow-700',
   high: 'bg-orange-100 text-orange-700',
   critical: 'bg-red-100 text-red-700',
 };
 
-const statusColors: Record<string, string> = {
+const STATUS_BADGE: Record<WOStatus, string> = {
   open: 'bg-blue-50 text-blue-700',
   in_progress: 'bg-purple-50 text-purple-700',
   closed: 'bg-green-50 text-green-700',
   cancelled: 'bg-gray-100 text-gray-600',
 };
 
-const typeColors: Record<string, string> = {
-  preventive: 'bg-gray-100 text-gray-700',
-  corrective: 'bg-gray-100 text-gray-700',
-  emergency: 'bg-red-50 text-red-700',
+const STATUS_LABEL: Record<WOStatus, string> = {
+  open: 'Open', in_progress: 'In Progress', closed: 'Closed', cancelled: 'Cancelled',
 };
 
-export default function WorkOrders() {
-  const { t } = useTranslation();
-  const [filterStatus, setFilterStatus] = useState('');
-  const [filterPriority, setFilterPriority] = useState('');
-  const [filterType, setFilterType] = useState('');
+function fmtDate(iso: string | null) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return `${m}/${d}/${y}`;
+}
 
-  const filtered = workOrders.filter((wo) => {
-    if (filterStatus && wo.status !== filterStatus) return false;
-    if (filterPriority && wo.priority !== filterPriority) return false;
-    if (filterType && wo.type !== filterType) return false;
+export default function WorkOrders() {
+  const { selectedCompanyId, selectedLocationId } = useScope();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === 'ime_admin';
+
+  const [rows, setRows] = useState<WORow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [filterStatus, setFilterStatus]     = useState('');
+  const [filterPriority, setFilterPriority] = useState('');
+  const [search, setSearch] = useState('');
+
+  const fetchData = useCallback(async () => {
+    if (!selectedCompanyId) { setRows([]); return; }
+    setLoading(true);
+
+    let q = supabase
+      .from('work_orders')
+      .select(`
+        id, wo_number, title, description, priority, status, assignee, sap_no, due_date, created_at, finding_id,
+        equipment ( tag, sections ( lines ( name ) ) )
+      `)
+      .eq('company_id', selectedCompanyId)
+      .order('created_at', { ascending: false });
+    if (selectedLocationId) q = q.eq('location_id', selectedLocationId);
+    const { data } = await q;
+
+    // finding condition/point (separate fetch avoids the dual-FK ambiguity)
+    const { data: fs } = await supabase
+      .from('findings')
+      .select('id, condition, measurement_points ( name )')
+      .eq('company_id', selectedCompanyId);
+    const fRows = (fs ?? []) as unknown as { id: string; condition: string; measurement_points: { name: string } | null }[];
+    const fMap = new Map(fRows.map(f =>
+      [f.id, { condition: f.condition, point: f.measurement_points?.name ?? null }] as [string, { condition: string; point: string | null }]));
+
+    const flat: WORow[] = ((data ?? []) as unknown as RawWO[]).map(w => {
+      const f = w.finding_id ? fMap.get(w.finding_id) : null;
+      return {
+        id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
+        priority: w.priority, status: w.status, assignee: w.assignee, sapNo: w.sap_no,
+        dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
+        equipment: w.equipment?.tag ?? '—',
+        line: w.equipment?.sections?.lines?.name ?? '—',
+        findingCondition: f?.condition ?? null,
+        findingPoint: f?.point ?? null,
+      };
+    });
+    setRows(flat);
+    setLoading(false);
+  }, [selectedCompanyId, selectedLocationId]);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  const updateStatus = async (id: string, status: WOStatus) => {
+    await supabase.from('work_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    setRows(rs => rs.map(r => r.id === id ? { ...r, status } : r));
+  };
+
+  const remove = async (id: string, findingId: string | null) => {
+    if (!confirm('Delete this work order?')) return;
+    await supabase.from('work_orders').delete().eq('id', id);
+    if (findingId) await supabase.from('findings').update({ status: 'open', work_order_id: null }).eq('id', findingId);
+    fetchData();
+  };
+
+  const visible = rows.filter(w => {
+    if (filterStatus && w.status !== filterStatus) return false;
+    if (filterPriority && w.priority !== filterPriority) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!`${w.woNumber} ${w.title ?? ''} ${w.equipment} ${w.assignee ?? ''}`.toLowerCase().includes(q)) return false;
+    }
     return true;
   });
 
-  const statusLabel = (s: string) => {
-    const map: Record<string, string> = {
-      open: t('workOrders.open'),
-      in_progress: t('workOrders.inProgress'),
-      closed: t('workOrders.closed'),
-      cancelled: t('workOrders.cancelled'),
-    };
-    return map[s] || s;
-  };
-
-  const typeLabel = (ty: string) => {
-    const map: Record<string, string> = {
-      preventive: t('workOrders.preventive'),
-      corrective: t('workOrders.corrective'),
-      emergency: t('workOrders.emergency'),
-    };
-    return map[ty] || ty;
-  };
+  if (!selectedCompanyId) {
+    return (
+      <div className="flex flex-col items-center justify-center h-72 text-gray-400 gap-3">
+        <Building2 size={36} className="opacity-30" />
+        <p className="text-sm">Select a company to view work orders</p>
+      </div>
+    );
+  }
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">{t('workOrders.title')}</h1>
-        <div className="flex items-center gap-3">
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-card-border bg-white text-sm font-medium text-gray-700 hover:bg-gray-50">
-            <Upload size={16} />
-            {t('workOrders.importCSV')}
-          </button>
-          <button className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary text-white text-sm font-medium hover:bg-primary-light">
-            <Plus size={16} />
-            {t('workOrders.createWorkOrder')}
-          </button>
+      <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Work Orders</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Created from findings and linked to assets.</p>
         </div>
+        <span className="text-xs font-bold px-3 py-1.5 rounded-full bg-blue-50 text-blue-700">
+          {rows.filter(w => w.status === 'open' || w.status === 'in_progress').length} active
+        </span>
       </div>
 
-      <div className="flex items-center gap-3 mb-6">
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value)}
-          className="px-4 py-2 rounded-lg text-sm border border-card-border bg-white text-gray-600"
-        >
-          <option value="">{t('workOrders.filterStatus')}</option>
-          <option value="open">{t('workOrders.open')}</option>
-          <option value="in_progress">{t('workOrders.inProgress')}</option>
-          <option value="closed">{t('workOrders.closed')}</option>
-          <option value="cancelled">{t('workOrders.cancelled')}</option>
+      {/* Filters */}
+      <div className="flex items-center gap-3 mb-4 flex-wrap">
+        <input
+          type="text" value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search WO #, title, asset…"
+          className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20"
+        />
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          <option value="">All statuses</option>
+          <option value="open">Open</option><option value="in_progress">In Progress</option>
+          <option value="closed">Closed</option><option value="cancelled">Cancelled</option>
         </select>
-        <select
-          value={filterPriority}
-          onChange={(e) => setFilterPriority(e.target.value)}
-          className="px-4 py-2 rounded-lg text-sm border border-card-border bg-white text-gray-600"
-        >
-          <option value="">{t('workOrders.filterPriority')}</option>
-          <option value="low">{t('workOrders.low')}</option>
-          <option value="medium">{t('workOrders.medium')}</option>
-          <option value="high">{t('workOrders.high')}</option>
-          <option value="critical">{t('workOrders.critical')}</option>
+        <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
+          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          <option value="">All priorities</option>
+          <option value="low">Low</option><option value="medium">Medium</option>
+          <option value="high">High</option><option value="critical">Critical</option>
         </select>
-        <select
-          value={filterType}
-          onChange={(e) => setFilterType(e.target.value)}
-          className="px-4 py-2 rounded-lg text-sm border border-card-border bg-white text-gray-600"
-        >
-          <option value="">{t('workOrders.filterType')}</option>
-          <option value="preventive">{t('workOrders.preventive')}</option>
-          <option value="corrective">{t('workOrders.corrective')}</option>
-          <option value="emergency">{t('workOrders.emergency')}</option>
-        </select>
+        <span className="text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
+          <strong className="text-gray-800">{visible.length}</strong> work orders
+        </span>
       </div>
 
-      <div className="bg-card-bg rounded-xl border border-card-border overflow-hidden">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-card-border">
-              <th className="text-left px-5 py-3 font-semibold text-gray-700">{t('workOrders.woNumber')}</th>
-              <th className="text-left px-5 py-3 font-semibold text-gray-700">{t('workOrders.type')}</th>
-              <th className="text-left px-5 py-3 font-semibold text-gray-700">{t('workOrders.priority')}</th>
-              <th className="text-left px-5 py-3 font-semibold text-gray-700">{t('workOrders.status')}</th>
-              <th className="text-left px-5 py-3 font-semibold text-gray-700">{t('workOrders.description')}</th>
-              <th className="text-right px-5 py-3 font-semibold text-gray-700">{t('workOrders.downtimeHours')}</th>
-              <th className="text-right px-5 py-3 font-semibold text-gray-700">{t('workOrders.actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((wo) => (
-              <tr key={wo.id} className="border-b border-card-border last:border-b-0 hover:bg-gray-50">
-                <td className="px-5 py-3 text-primary font-medium">{wo.woNumber}</td>
-                <td className="px-5 py-3">
-                  <span className={`px-2.5 py-1 rounded text-xs font-medium ${typeColors[wo.type]}`}>
-                    {typeLabel(wo.type)}
-                  </span>
-                </td>
-                <td className="px-5 py-3">
-                  <span className={`px-2.5 py-1 rounded text-xs font-medium ${priorityColors[wo.priority]}`}>
-                    {t(`workOrders.${wo.priority}`)}
-                  </span>
-                </td>
-                <td className="px-5 py-3">
-                  <span className={`px-2.5 py-1 rounded text-xs font-medium ${statusColors[wo.status]}`}>
-                    {statusLabel(wo.status)}
-                  </span>
-                </td>
-                <td className="px-5 py-3 text-gray-600 max-w-[300px] truncate">{wo.description}</td>
-                <td className="px-5 py-3 text-right text-gray-600">
-                  {wo.downtimeHours ?? '--'}
-                </td>
-                <td className="px-5 py-3 text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <button className="flex items-center gap-1 px-3 py-1.5 rounded border border-card-border text-xs font-medium text-gray-600 hover:bg-gray-50">
-                      <Pencil size={12} />
-                      {t('workOrders.edit')}
-                    </button>
-                    <button className="p-1.5 text-gray-400 hover:text-red-500">
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </td>
+      <div className="overflow-x-auto border border-gray-100 rounded-2xl bg-white shadow-sm">
+        {loading ? (
+          <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-gray-300" /></div>
+        ) : visible.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2">
+            <ClipboardList size={26} className="opacity-30" />
+            <p className="text-sm">No work orders yet</p>
+            <p className="text-xs">Create one from a finding in the Findings tab.</p>
+          </div>
+        ) : (
+          <table className="w-full border-collapse text-[13px] whitespace-nowrap">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50/60 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                <th className="px-3 py-3 text-left">WO #</th>
+                <th className="px-3 py-3 text-left">Asset</th>
+                <th className="px-3 py-3 text-left">Title</th>
+                <th className="px-3 py-3 text-left">Finding</th>
+                <th className="px-3 py-3 text-left">Priority</th>
+                <th className="px-3 py-3 text-left">Status</th>
+                <th className="px-3 py-3 text-left">Assignee</th>
+                <th className="px-3 py-3 text-left">Due</th>
+                <th className="px-3 py-3 text-left">Created</th>
+                {isAdmin && <th className="px-3 py-3 text-right">Action</th>}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {visible.map(w => (
+                <tr key={w.id} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
+                  <td className="px-3 py-2.5 font-mono font-semibold text-primary">{w.woNumber}</td>
+                  <td className="px-3 py-2.5">
+                    <span className="font-mono font-semibold text-gray-800">{w.equipment}</span>
+                    <span className="block text-[10px] text-gray-400">{w.line}</span>
+                  </td>
+                  <td className="px-3 py-2.5 text-gray-600 max-w-[240px] truncate" title={w.description ?? ''}>{w.title ?? '—'}</td>
+                  <td className="px-3 py-2.5">
+                    {w.findingCondition
+                      ? <span className="text-xs text-gray-500">{w.findingCondition} · {w.findingPoint}</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${PRIORITY_BADGE[w.priority]}`}>{w.priority}</span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {isAdmin ? (
+                      <select value={w.status} onChange={e => updateStatus(w.id, e.target.value as WOStatus)}
+                        className={`px-2 py-0.5 rounded-full text-[11px] font-bold border-0 cursor-pointer ${STATUS_BADGE[w.status]}`}>
+                        <option value="open">Open</option><option value="in_progress">In Progress</option>
+                        <option value="closed">Closed</option><option value="cancelled">Cancelled</option>
+                      </select>
+                    ) : (
+                      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[w.status]}`}>{STATUS_LABEL[w.status]}</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5 text-gray-500">{w.assignee ?? '—'}</td>
+                  <td className="px-3 py-2.5 text-gray-400 text-xs">{fmtDate(w.dueDate)}</td>
+                  <td className="px-3 py-2.5 text-gray-400 text-xs">{fmtDate(w.createdAt)}</td>
+                  {isAdmin && (
+                    <td className="px-3 py-2.5 text-right">
+                      <button onClick={() => remove(w.id, w.findingId)} className="p-1.5 text-gray-400 hover:text-red-500">
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
