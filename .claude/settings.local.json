@@ -30,7 +30,8 @@
       "mcp__visualize__read_me",
       "Bash(python3 -c ' *)",
       "mcp__visualize__show_widget",
-      "Bash(command -v pwsh)"
+      "Bash(command -v pwsh)",
+      "Bash(xargs kill)"
     ]
   }
 }

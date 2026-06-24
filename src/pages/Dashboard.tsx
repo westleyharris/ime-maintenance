@@ -3,6 +3,7 @@ import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X, Che
 import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/fetchAll';
+import { AssetHealthModal } from '../components/EquipmentDetail';
 import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -15,6 +16,7 @@ interface MeasurementRow {
     name: string;
     components: {
       equipment: {
+        id: string;
         tag: string;
         status: string | null;
         sections: { uas_name: string; lines: { name: string } };
@@ -28,6 +30,7 @@ interface FlatAlarm {
   measuredAt: string;
   line: string;
   system: string;
+  equipmentId: string;
   equipmentTag: string;
   equipmentStatus: string;
   point: string;
@@ -36,6 +39,7 @@ interface FlatAlarm {
 interface FlatEquipment {
   line: string;
   system: string;
+  equipmentId: string;
   equipmentTag: string;
   worstLevel: string;
   pointCounts: Record<string, number>;
@@ -66,7 +70,7 @@ function formatDate(iso: string): string {
 
 // ── Points alarm panel ────────────────────────────────────────────────────────
 
-function PointsAlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; rows: FlatAlarm[] }) {
+function PointsAlarmPanel({ level, rows, onSelect }: { level: 'Danger' | 'Warning' | 'Alert'; rows: FlatAlarm[]; onSelect: (id: string, tag: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const t = ALARM[level];
   const visible = expanded ? rows : rows.slice(0, PREVIEW_COUNT);
@@ -91,7 +95,9 @@ function PointsAlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Aler
           </div>
           <div className="divide-y divide-gray-50 bg-white">
             {visible.map((r, i) => (
-              <div key={i} className={`px-4 py-2 text-xs ${t.row} transition-colors`}>
+              <div key={i}
+                onClick={() => r.equipmentId && onSelect(r.equipmentId, r.equipmentTag)}
+                className={`px-4 py-2 text-xs ${t.row} transition-colors ${r.equipmentId ? 'cursor-pointer' : ''}`}>
                 <div className="sm:hidden flex items-start justify-between gap-2">
                   <div>
                     <p className="font-mono font-medium text-gray-800">{r.equipmentTag}</p>
@@ -123,7 +129,7 @@ function PointsAlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Aler
 
 // ── Equipment alarm panel ─────────────────────────────────────────────────────
 
-function EquipmentAlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'Alert'; rows: FlatEquipment[] }) {
+function EquipmentAlarmPanel({ level, rows, onSelect }: { level: 'Danger' | 'Warning' | 'Alert'; rows: FlatEquipment[]; onSelect: (id: string, tag: string) => void }) {
   const [expanded, setExpanded] = useState(false);
   const t = ALARM[level];
   const visible = expanded ? rows : rows.slice(0, PREVIEW_COUNT);
@@ -152,7 +158,9 @@ function EquipmentAlarmPanel({ level, rows }: { level: 'Danger' | 'Warning' | 'A
                 .filter(l => (r.pointCounts[l] ?? 0) > 0)
                 .map(l => ({ l, count: r.pointCounts[l] }));
               return (
-                <div key={i} className={`px-4 py-2.5 text-xs ${t.row} transition-colors`}>
+                <div key={i}
+                  onClick={() => r.equipmentId && onSelect(r.equipmentId, r.equipmentTag)}
+                  className={`px-4 py-2.5 text-xs ${t.row} transition-colors ${r.equipmentId ? 'cursor-pointer' : ''}`}>
                   <div className="sm:hidden">
                     <p className="font-mono font-medium text-gray-800">{r.equipmentTag}</p>
                     <p className="text-gray-500 mt-0.5">{r.system} · {r.line}</p>
@@ -211,8 +219,11 @@ export default function Dashboard() {
   const [nextVisit, setNextVisit]     = useState<string | null>(null);
   const [showPicker, setShowPicker]   = useState(false);
   const [savingVisit, setSavingVisit] = useState(false);
-  const [viewMode, setViewMode]       = useState<ViewMode>('points');
+  const [viewMode, setViewMode]       = useState<ViewMode>('equipment');
+  const [selectedAsset, setSelectedAsset] = useState<{ id: string; tag: string } | null>(null);
   const pickerRef                     = useRef<HTMLDivElement>(null);
+
+  const openAsset = (id: string, tag: string) => setSelectedAsset({ id, tag });
 
   useEffect(() => {
     if (!showPicker) return;
@@ -251,7 +262,7 @@ export default function Dashboard() {
             name,
             components (
               equipment (
-                tag, status,
+                id, tag, status,
                 sections ( uas_name, lines ( name ) )
               )
             )
@@ -274,6 +285,7 @@ export default function Dashboard() {
           measuredAt:      m.measured_at,
           line:            m.measurement_points.components?.equipment?.sections?.lines?.name ?? '—',
           system:          m.measurement_points.components?.equipment?.sections?.uas_name ?? '—',
+          equipmentId:     m.measurement_points.components?.equipment?.id ?? '',
           equipmentTag:    m.measurement_points.components?.equipment?.tag ?? '—',
           equipmentStatus: m.measurement_points.components?.equipment?.status ?? 'active',
           point:           m.measurement_points.name,
@@ -315,6 +327,7 @@ export default function Dashboard() {
       equipmentMap.set(r.equipmentTag, {
         line: r.line,
         system: r.system,
+        equipmentId: r.equipmentId,
         equipmentTag: r.equipmentTag,
         worstLevel: r.alarmLevel,
         pointCounts: { [r.alarmLevel]: 1 },
@@ -578,20 +591,28 @@ export default function Dashboard() {
               </div>
             ) : viewMode === 'points' ? (
               <>
-                <PointsAlarmPanel   level="Danger"  rows={byLevel.Danger}  />
-                <PointsAlarmPanel   level="Warning" rows={byLevel.Warning} />
-                <PointsAlarmPanel   level="Alert"   rows={byLevel.Alert}   />
+                <PointsAlarmPanel   level="Danger"  rows={byLevel.Danger}  onSelect={openAsset} />
+                <PointsAlarmPanel   level="Warning" rows={byLevel.Warning} onSelect={openAsset} />
+                <PointsAlarmPanel   level="Alert"   rows={byLevel.Alert}   onSelect={openAsset} />
               </>
             ) : (
               <>
-                <EquipmentAlarmPanel level="Danger"  rows={byLevelEquipment.Danger}  />
-                <EquipmentAlarmPanel level="Warning" rows={byLevelEquipment.Warning} />
-                <EquipmentAlarmPanel level="Alert"   rows={byLevelEquipment.Alert}   />
+                <EquipmentAlarmPanel level="Danger"  rows={byLevelEquipment.Danger}  onSelect={openAsset} />
+                <EquipmentAlarmPanel level="Warning" rows={byLevelEquipment.Warning} onSelect={openAsset} />
+                <EquipmentAlarmPanel level="Alert"   rows={byLevelEquipment.Alert}   onSelect={openAsset} />
               </>
             )}
           </div>
 
         </div>
+      )}
+
+      {selectedAsset && (
+        <AssetHealthModal
+          equipmentId={selectedAsset.id}
+          equipmentTag={selectedAsset.tag}
+          onClose={() => setSelectedAsset(null)}
+        />
       )}
     </div>
   );

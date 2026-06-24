@@ -56,6 +56,9 @@ interface FlatRow {
   alarmLevel: string;
   measuredAt: string;
   deltaRms: number | null;
+  deltaMaxRms: number | null;
+  deltaPeak: number | null;
+  deltaCrest: number | null;
 }
 
 interface EquipmentGroup {
@@ -93,6 +96,9 @@ function flatten(m: MeasurementRow): FlatRow | null {
     alarmLevel: m.alarm_level,
     measuredAt: m.measured_at,
     deltaRms: null,
+    deltaMaxRms: null,
+    deltaPeak: null,
+    deltaCrest: null,
   };
 }
 
@@ -109,6 +115,16 @@ const ALARM = {
 const A = (level: string) => ALARM[level as keyof typeof ALARM] ?? ALARM.Normal;
 
 function fmt(n: number | null) { return n == null ? '—' : n.toFixed(2); }
+
+// Up = worse (red), down = better (green), relative to the previous reading.
+function DeltaArrow({ d }: { d: number | null }) {
+  if (d == null) return null;
+  return (
+    <span className={`text-[10px] font-semibold ${d > 0 ? 'text-red-500' : d < 0 ? 'text-green-600' : 'text-gray-400'}`}>
+      {d > 0 ? '▲' : d < 0 ? '▼' : '—'}{Math.abs(d).toFixed(2)}
+    </span>
+  );
+}
 function fmtDate(iso: string) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
@@ -351,6 +367,8 @@ export default function Ultrasound() {
         if (!byPoint.has(r.measurementPointId)) byPoint.set(r.measurementPointId, []);
         byPoint.get(r.measurementPointId)!.push(r);
       }
+      const delta = (a: number | null, b: number | null | undefined) =>
+        (a != null && b != null) ? a - b : null;
       const deduped: FlatRow[] = [];
       for (const pts of byPoint.values()) {
         pts.sort((a, b) => b.measuredAt.localeCompare(a.measuredAt));
@@ -358,9 +376,10 @@ export default function Ultrasound() {
         const prev   = pts[1];
         deduped.push({
           ...latest,
-          deltaRms: (latest.overallRms != null && prev?.overallRms != null)
-            ? latest.overallRms - prev.overallRms
-            : null,
+          deltaRms:    delta(latest.overallRms, prev?.overallRms),
+          deltaMaxRms: delta(latest.maxRms, prev?.maxRms),
+          deltaPeak:   delta(latest.peak, prev?.peak),
+          deltaCrest:  delta(latest.crestFactor, prev?.crestFactor),
         });
       }
       setRows(deduped);
@@ -394,8 +413,10 @@ export default function Ultrasound() {
 
   // ── Derived ─────────────────────────────────────────────────────────────────
 
-  const lines    = [...new Set(rows.map(r => r.line))].sort();
-  const sections = [...new Set(rows.map(r => r.section))].sort();
+  // Line/system dropdowns cascade off each other: systems are scoped to the
+  // selected line, and lines are scoped to the selected system.
+  const lines    = [...new Set(rows.filter(r => !filterSection || r.section === filterSection).map(r => r.line))].sort();
+  const sections = [...new Set(rows.filter(r => !filterLine    || r.line    === filterLine).map(r => r.section))].sort();
 
   const filtered = rows.filter(r => {
     if (filterAlarm   && r.alarmLevel !== filterAlarm)   return false;
@@ -498,7 +519,7 @@ export default function Ultrasound() {
           <div className="flex items-center gap-3 flex-wrap">
             <input type="text" placeholder="Search equipment, component, point…" value={search} onChange={e => setSearch(e.target.value)}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm w-72 focus:outline-none focus:ring-2 focus:ring-primary/30" />
-            <select value={filterLine} onChange={e => setFilterLine(e.target.value)}
+            <select value={filterLine} onChange={e => { setFilterLine(e.target.value); setFilterSection(''); }}
               className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
               <option value="">All Lines</option>
               {lines.map(l => <option key={l} value={l}>{l}</option>)}
@@ -569,19 +590,15 @@ export default function Ultrasound() {
                             <p className="text-[10px] text-gray-400 uppercase tracking-wide">RMS</p>
                             <div className="flex items-center gap-1.5 justify-end">
                               <p className="text-xs font-mono font-semibold text-gray-700">{fmt(r.overallRms)}</p>
-                              {r.deltaRms != null && (
-                                <span className={`text-[10px] font-semibold ${r.deltaRms > 0 ? 'text-red-500' : r.deltaRms < 0 ? 'text-green-600' : 'text-gray-400'}`}>
-                                  {r.deltaRms > 0 ? '▲' : r.deltaRms < 0 ? '▼' : '—'}{Math.abs(r.deltaRms).toFixed(2)}
-                                </span>
-                              )}
+                              <DeltaArrow d={r.deltaRms} />
                             </div>
                           </div>
 
                           {/* Other metrics */}
                           <div className="hidden lg:flex items-center gap-4 flex-1 shrink-0 text-xs text-gray-500 font-mono">
-                            <span title="Max RMS"><span className="text-gray-300 mr-1">max</span>{fmt(r.maxRms)}</span>
-                            <span title="Peak"><span className="text-gray-300 mr-1">pk</span>{fmt(r.peak)}</span>
-                            <span title="Crest Factor"><span className="text-gray-300 mr-1">cf</span>{fmt(r.crestFactor)}</span>
+                            <span title="Max RMS" className="inline-flex items-center gap-1"><span className="text-gray-300">max</span>{fmt(r.maxRms)}<DeltaArrow d={r.deltaMaxRms} /></span>
+                            <span title="Peak" className="inline-flex items-center gap-1"><span className="text-gray-300">pk</span>{fmt(r.peak)}<DeltaArrow d={r.deltaPeak} /></span>
+                            <span title="Crest Factor" className="inline-flex items-center gap-1"><span className="text-gray-300">cf</span>{fmt(r.crestFactor)}<DeltaArrow d={r.deltaCrest} /></span>
                           </div>
 
                           {/* Alarm badge */}

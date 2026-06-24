@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 
@@ -365,7 +365,15 @@ function AssetHealthTab({ components, notes, info }: {
 
   // ── KPI computations (post-replacement only) ──────────────────────────────
   const replacedTs = info?.last_replaced_at ? new Date(info.last_replaced_at).getTime() : null;
-  const kpiMeas = allMeas.filter(m => !replacedTs || new Date(m.measured_at + 'T12:00:00').getTime() > replacedTs);
+  // Latest reading per measurement point, so "Total Readings" counts points with
+  // data (not the full history) and the breakdown reflects each point's current state.
+  const kpiMeas: typeof allMeas = [];
+  for (const comp of components) {
+    for (const mp of (comp.measurement_points ?? [])) {
+      const ms = (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at + 'T12:00:00').getTime() > replacedTs);
+      if (ms.length) kpiMeas.push(ms.reduce((a, b) => (a.measured_at >= b.measured_at ? a : b)));
+    }
+  }
   const kpiTotal    = kpiMeas.length;
   const kpiDanger   = kpiMeas.filter(m => m.alarm_level === 'Danger').length;
   const kpiWarning  = kpiMeas.filter(m => m.alarm_level === 'Warning').length;
@@ -630,15 +638,16 @@ function KPIsTab({ components, status, lastReplacedAt }: {
   lastReplacedAt: string | null;
 }) {
   const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
-  // KPIs use only current measurements (post-replacement if applicable)
-  const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp =>
-    (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs)
-  ));
-  const dangerCount  = allMeas.filter(m => m.alarm_level === 'Danger').length;
-  const warningCount = allMeas.filter(m => m.alarm_level === 'Warning').length;
-  const alertCount   = allMeas.filter(m => m.alarm_level === 'Alert').length;
-  const normalCount  = allMeas.filter(m => m.alarm_level === 'Normal').length;
-  const total = allMeas.length;
+  // Latest reading per point (current per-point status, not the full history)
+  const latestMeas = components.flatMap(c => (c.measurement_points ?? []).map(mp => {
+    const ms = (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs);
+    return ms.length ? ms.reduce((a, b) => (a.measured_at >= b.measured_at ? a : b)) : null;
+  })).filter((m): m is NonNullable<typeof m> => m !== null);
+  const dangerCount  = latestMeas.filter(m => m.alarm_level === 'Danger').length;
+  const warningCount = latestMeas.filter(m => m.alarm_level === 'Warning').length;
+  const alertCount   = latestMeas.filter(m => m.alarm_level === 'Alert').length;
+  const normalCount  = latestMeas.filter(m => m.alarm_level === 'Normal').length;
+  const total = latestMeas.length;
 
   const kpis = [
     { label: 'MTBF',            value: '—',   sub: 'hours',    note: 'Requires work order history' },
@@ -1541,6 +1550,106 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
           {activeTab === 'qr'       && <QRTab tag={equipmentTag} displayName={info?.display_name ?? null} />}
         </>
       )}
+    </div>
+  );
+}
+
+// ── Asset Health modal (just the Asset Health tab, in a popup) ─────────────────
+
+export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
+  equipmentId: string;
+  equipmentTag: string;
+  onClose: () => void;
+}) {
+  const [info, setInfo]             = useState<EquipmentInfo | null>(null);
+  const [components, setComponents] = useState<ComponentData[]>([]);
+  const [notes, setNotes]           = useState<EquipmentNote[]>([]);
+  const [loading, setLoading]       = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      try {
+        const baseRes = await supabase
+          .from('equipment')
+          .select(`id, tag, image_url, display_name, asset_type, manufacturer, model, serial_number, installation_date, status, status_note, last_replaced_at, location_notes, spec_rated_power, spec_rated_speed, spec_flow_rate, spec_pressure, spec_temperature, spec_weight, sections ( uas_name, lines ( name ) )`)
+          .eq('id', equipmentId)
+          .single();
+
+        const compRes = await supabase
+          .from('components').select('id, name').eq('equipment_id', equipmentId).order('name');
+        const comps = compRes.data ?? [];
+
+        const compIds = comps.map(c => c.id);
+        const mpRes = compIds.length > 0
+          ? await supabase.from('measurement_points').select('id, name, component_id').in('component_id', compIds)
+          : { data: [] };
+        const mps = mpRes.data ?? [];
+
+        const mpIds = mps.map(mp => mp.id);
+        const measRes = mpIds.length > 0
+          ? await supabase.from('measurements')
+              .select('id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measurement_point_id')
+              .in('measurement_point_id', mpIds)
+              .order('measured_at', { ascending: false })
+          : { data: [] };
+        const measData = measRes.data ?? [];
+
+        const assembled: ComponentData[] = comps.map(comp => ({
+          id:   comp.id,
+          name: comp.name,
+          measurement_points: mps
+            .filter(mp => mp.component_id === comp.id)
+            .map(mp => ({
+              id:   mp.id,
+              name: mp.name,
+              measurements: measData.filter(m => m.measurement_point_id === mp.id),
+            })),
+        }));
+
+        const notesRes = await supabase
+          .from('equipment_notes')
+          .select('id, note_type, message, metadata, created_at')
+          .eq('equipment_id', equipmentId)
+          .order('created_at', { ascending: false });
+
+        if (!cancelled) {
+          setInfo((baseRes.data ?? {}) as unknown as EquipmentInfo);
+          setComponents(assembled);
+          setNotes((notesRes.data ?? []) as EquipmentNote[]);
+        }
+      } catch (err) {
+        console.error('AssetHealthModal load error:', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [equipmentId]);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col"
+        onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <div>
+            <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Asset Health</p>
+            <h2 className="text-base font-bold text-gray-900 mt-0.5 font-mono">{equipmentTag}</h2>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-400">
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-6 overflow-y-auto">
+          {loading ? (
+            <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-gray-300" /></div>
+          ) : (
+            <AssetHealthTab components={components} notes={notes} info={info} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }

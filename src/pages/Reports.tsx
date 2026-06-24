@@ -490,6 +490,8 @@ export default function Reports() {
   const [generatingReport, setGeneratingReport] = useState(false);
   const [metric, setMetric] = useState<MetricKey>('rms');
   const [search, setSearch] = useState('');
+  const [filterLine, setFilterLine]   = useState('');
+  const [filterAlarm, setFilterAlarm] = useState('');
   const chartUrlRef = useRef<string | null>(null);
 
   const locationName = locations.find(l => l.id === selectedLocationId)?.name ?? 'All Locations';
@@ -550,6 +552,8 @@ export default function Reports() {
     setChartUrl(null);
     setChartStatus({ type: 'idle', msg: '' });
     setSearch('');
+    setFilterLine('');
+    setFilterAlarm('');
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
 
@@ -561,7 +565,17 @@ export default function Reports() {
     return acc;
   }, {});
 
-  const sortedRows = [...rows].sort(
+  const lineOptions = Array.from(new Set(rows.map(r => r.line)))
+    .filter(l => l && l !== '—')
+    .sort();
+
+  // Line + alarm filters drive the table, chart, CSV and report.
+  const baseRows = rows.filter(r =>
+    (!filterLine  || r.line === filterLine) &&
+    (!filterAlarm || r.alarmLevel === filterAlarm)
+  );
+
+  const sortedRows = [...baseRows].sort(
     (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0)
   );
 
@@ -601,13 +615,14 @@ export default function Reports() {
   // Auto-refresh chart when metric changes (only if already visible)
   useEffect(() => {
     if (chartUrlRef.current && rows.length) {
-      const dw = [...rows]
+      const dw = rows
+        .filter(r => (!filterLine || r.line === filterLine) && (!filterAlarm || r.alarmLevel === filterAlarm))
         .sort((a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0))
         .filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
       if (dw.length) setChartUrl(renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metric]);
+  }, [metric, filterLine, filterAlarm]);
 
   const handleDownloadPNG = () => {
     if (!chartUrl) return;
@@ -618,11 +633,11 @@ export default function Reports() {
   };
 
   const handleGenerateReport = async () => {
-    if (!rows.length) return;
+    if (!sortedRows.length) return;
     setGeneratingReport(true);
     try {
       const m = METRICS.find(x => x.key === metric)!;
-      await generateReport(rows, metric, m.pdfLabel, locationName, companyName);
+      await generateReport(sortedRows, metric, m.pdfLabel, locationName, companyName);
     } finally {
       setGeneratingReport(false);
     }
@@ -796,8 +811,8 @@ export default function Reports() {
         {rows.length > 0 && (
           <>
             {/* Table toolbar */}
-            <div className="flex items-center gap-3">
-              <div className="flex-1 relative">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex-1 relative min-w-[180px]">
                 <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                 <input
                   type="text"
@@ -807,9 +822,33 @@ export default function Reports() {
                   className="w-full py-2.5 pl-9 pr-3 border border-gray-200 rounded-xl bg-white text-[13px] text-gray-800 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/[0.08] transition-all"
                 />
               </div>
+              <select
+                value={filterLine}
+                onChange={e => setFilterLine(e.target.value)}
+                className="py-2.5 px-3 border border-gray-200 rounded-xl bg-white text-[13px] text-gray-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/[0.08] transition-all"
+              >
+                <option value="">All lines</option>
+                {lineOptions.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              <select
+                value={filterAlarm}
+                onChange={e => setFilterAlarm(e.target.value)}
+                className="py-2.5 px-3 border border-gray-200 rounded-xl bg-white text-[13px] text-gray-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/[0.08] transition-all"
+              >
+                <option value="">All alarms</option>
+                {ALARM_ORDER.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
+              {(filterLine || filterAlarm || search) && (
+                <button
+                  onClick={() => { setFilterLine(''); setFilterAlarm(''); setSearch(''); }}
+                  className="text-[12px] font-semibold text-primary hover:underline whitespace-nowrap px-1"
+                >
+                  Clear
+                </button>
+              )}
               <span className="text-[12px] text-gray-500 whitespace-nowrap px-3 py-2.5 border border-gray-200 rounded-xl bg-white shadow-sm">
                 <strong className="text-gray-800">{visibleRows.length}</strong>
-                {search ? ` / ${sortedRows.length}` : ''} rows
+                {(search || filterLine || filterAlarm) ? ` / ${rows.length}` : ''} rows
               </span>
             </div>
 
@@ -842,7 +881,7 @@ export default function Reports() {
                     {visibleRows.length === 0 ? (
                       <tr>
                         <td colSpan={9} className="text-center py-12 text-sm text-gray-400">
-                          No assets match your search
+                          No assets match your filters
                         </td>
                       </tr>
                     ) : visibleRows.map((row, i) => (
