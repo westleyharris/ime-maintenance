@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useScope } from '../context/ScopeContext';
+import FeedbackButton from './FeedbackButton';
 
 const roleBadge: Record<string, { label: string; className: string }> = {
   ime_admin:     { label: 'IME Admin',     className: 'bg-sidebar text-white' },
@@ -127,6 +128,7 @@ export default function Header() {
 
         {/* Right controls */}
         <div className="flex items-center gap-2 md:gap-3 md:pr-6">
+          {profile && <FeedbackButton />}
           <button onClick={toggleLanguage}
             className="text-xs font-bold text-gray-500 hover:text-primary transition-colors border border-gray-200 rounded px-1.5 py-0.5">
             {i18n.language === 'en' ? 'EN' : 'ES'}

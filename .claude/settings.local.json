@@ -34,7 +34,9 @@
       "Bash(xargs kill)",
       "Bash(wc -l src/pages/Findings.tsx src/pages/WorkOrders.tsx src/pages/PMCalendar.tsx)",
       "Bash(grep -rn \"PMCalendar\\\\|Findings\\\\|WorkOrders\\\\|pm-calendar\\\\|findings\\\\|work-orders\\\\|Calendar\" src/App.tsx src/main.tsx)",
-      "Bash(grep -rln \"PMCalendar\\\\|PM Calendar\\\\|pm-calendar\\\\|Findings\\\\|WorkOrders\" src/components src/layouts)"
+      "Bash(grep -rln \"PMCalendar\\\\|PM Calendar\\\\|pm-calendar\\\\|Findings\\\\|WorkOrders\" src/components src/layouts)",
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__deploy_edge_function",
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__get_logs"
     ]
   }
 }
