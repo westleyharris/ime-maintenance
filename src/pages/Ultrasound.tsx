@@ -179,6 +179,98 @@ function CustomDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: Tr
   );
 }
 
+// ── Signal analysis (FLAC waveform + UAS3 FFT) ──────────────────────────────────
+
+function SignalView({ waveformPath, fftPath, sampleRate }: {
+  waveformPath: string | null; fftPath: string | null; sampleRate: number | null;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [wave, setWave]       = useState<{ x: number; y: number }[] | null>(null);
+  const [spec, setSpec]       = useState<{ f: number; m: number }[] | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [err, setErr]         = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setLoading(true); setErr(null); setWave(null); setSpec(null); setAudioUrl(null);
+      try {
+        if (waveformPath) {
+          const { data: s } = await supabase.storage.from('uas-signals').createSignedUrl(waveformPath, 3600);
+          if (s?.signedUrl && !cancelled) {
+            setAudioUrl(s.signedUrl);
+            const ab = await (await fetch(s.signedUrl)).arrayBuffer();
+            const AC = (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext);
+            const ac = new AC();
+            const audio = await ac.decodeAudioData(ab.slice(0));
+            const ch = audio.getChannelData(0);
+            const N = 900; const block = Math.max(1, Math.floor(ch.length / N));
+            const w: { x: number; y: number }[] = [];
+            for (let i = 0; i < N; i++) { let mx = 0; for (let j = 0; j < block; j++) { const v = Math.abs(ch[i * block + j] || 0); if (v > mx) mx = v; } w.push({ x: i, y: mx }); }
+            ac.close();
+            if (!cancelled) setWave(w);
+          }
+        }
+        if (fftPath) {
+          const { data: s } = await supabase.storage.from('uas-signals').createSignedUrl(fftPath, 3600);
+          if (s?.signedUrl && !cancelled) {
+            const ab = await (await fetch(s.signedUrl)).arrayBuffer();
+            const arr = new Float32Array(ab);
+            const n = arr.length; const N = 1000; const block = Math.max(1, Math.floor(n / N));
+            const nyq = (sampleRate || 32000) / 2;
+            const sp: { f: number; m: number }[] = [];
+            for (let i = 0; i < N; i++) { let mx = 0; for (let j = 0; j < block; j++) { const v = Math.abs(arr[i * block + j] || 0); if (v > mx) mx = v; } sp.push({ f: Math.round((i / (N - 1)) * nyq), m: mx }); }
+            if (!cancelled) setSpec(sp);
+          }
+        }
+      } catch { if (!cancelled) setErr('Could not load signal'); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [waveformPath, fftPath, sampleRate]);
+
+  if (loading) return <div className="flex justify-center py-8"><Loader2 size={20} className="animate-spin text-gray-300" /></div>;
+  if (err)     return <p className="text-xs text-gray-400">{err}</p>;
+
+  return (
+    <div className="space-y-4">
+      {spec && (
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Spectrum (FFT)</p>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={spec} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="f" tick={{ fontSize: 10, fill: '#9ca3af' }} tickLine={false} axisLine={false}
+                tickFormatter={(v: number) => `${(v / 1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 10, fill: '#9ca3af' }} width={36} tickLine={false} axisLine={false} />
+              <Tooltip contentStyle={{ fontSize: 11, borderRadius: 8 }} formatter={(v) => [Number(v).toFixed(2), 'mag']} labelFormatter={(l) => `${l} Hz`} />
+              <Line type="monotone" dataKey="m" stroke="#06b6d4" strokeWidth={1.2} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {wave && (
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Waveform (envelope)</p>
+          <ResponsiveContainer width="100%" height={110}>
+            <LineChart data={wave} margin={{ top: 4, right: 12, left: 0, bottom: 0 }}>
+              <XAxis dataKey="x" hide />
+              <YAxis hide domain={[0, 'dataMax']} />
+              <Line type="monotone" dataKey="y" stroke="#8b5cf6" strokeWidth={1} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {audioUrl && (
+        <div>
+          <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Listen</p>
+          <audio src={audioUrl} controls className="w-full" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TrendModal({ point, equipmentTag, onClose }: {
   point: { id: string; name: string };
   equipmentTag: string;
@@ -187,25 +279,33 @@ function TrendModal({ point, equipmentTag, onClose }: {
   const [data, setData]       = useState<TrendEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [metric, setMetric]   = useState<Metric>('overallRms');
+  const [sig, setSig]         = useState<{ waveformPath: string; fftPath: string | null; sampleRate: number | null } | null>(null);
+  const [bearingRpm, setBearingRpm] = useState<number | null>(null);
 
   useEffect(() => {
     supabase
       .from('measurements')
-      .select('overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at')
+      .select('overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, waveform_path, fft_path, sample_rate')
       .eq('measurement_point_id', point.id)
       .order('measured_at', { ascending: true })
       .then(({ data: rows }) => {
-        setData((rows ?? []).map(m => ({
-          date:       new Date(m.measured_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }),
-          fullDate:   m.measured_at,
-          overallRms: m.overall_rms,
-          maxRms:     m.max_rms,
-          peak:       m.peak,
-          crestFactor: m.crest_factor,
-          alarmLevel: m.alarm_level,
+        const rs = (rows ?? []) as Array<Record<string, unknown>>;
+        setData(rs.map(m => ({
+          date:       new Date(m.measured_at as string).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }),
+          fullDate:   m.measured_at as string,
+          overallRms: m.overall_rms as number | null,
+          maxRms:     m.max_rms as number | null,
+          peak:       m.peak as number | null,
+          crestFactor: m.crest_factor as number | null,
+          alarmLevel: m.alarm_level as string,
         })));
+        const withSig = rs.filter(m => m.waveform_path);
+        const s = withSig.length ? withSig[withSig.length - 1] : null;
+        setSig(s ? { waveformPath: s.waveform_path as string, fftPath: (s.fft_path as string) ?? null, sampleRate: (s.sample_rate as number) ?? null } : null);
         setLoading(false);
       });
+    supabase.from('measurement_points').select('bearing_rotating_speed').eq('id', point.id).single()
+      .then(({ data: p }) => setBearingRpm((p?.bearing_rotating_speed as number) ?? null));
   }, [point.id]);
 
   const cfg = METRIC_OPTIONS.find(m => m.key === metric)!;
@@ -219,20 +319,21 @@ function TrendModal({ point, equipmentTag, onClose }: {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-3xl shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
             <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">{equipmentTag}</p>
             <h2 className="text-base font-bold text-gray-900 mt-0.5">{point.name}</h2>
+            {bearingRpm != null && <p className="text-xs text-gray-400 mt-0.5">Bearing rotating speed: <span className="font-semibold text-gray-600">{bearingRpm}</span> RPM</p>}
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-400">
             <X size={16} />
           </button>
         </div>
 
-        <div className="p-6 space-y-5">
+        <div className="p-6 space-y-5 overflow-y-auto">
           {/* Metric selector */}
           <div className="flex items-center gap-2 flex-wrap">
             {METRIC_OPTIONS.map(m => (
@@ -298,6 +399,17 @@ function TrendModal({ point, equipmentTag, onClose }: {
             <p className="text-xs text-gray-300 text-right">
               {data.length} measurement{data.length !== 1 ? 's' : ''} · dots colored by alarm level
             </p>
+          )}
+
+          {/* Signal analysis */}
+          {!loading && sig && (
+            <div className="border-t border-gray-100 pt-4">
+              <p className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
+                <Waves size={15} className="text-primary" /> Signal analysis
+                <span className="text-xs font-normal text-gray-400">· latest reading</span>
+              </p>
+              <SignalView waveformPath={sig.waveformPath} fftPath={sig.fftPath} sampleRate={sig.sampleRate} />
+            </div>
           )}
         </div>
       </div>

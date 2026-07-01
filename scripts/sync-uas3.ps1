@@ -10,11 +10,14 @@
   (e.g. 115150520_rccbalsip). For each schema the script:
     1. parses company + location from the schema name and matches them to
        Supabase companies/locations,
-    2. reads tbl_mast_nodes + tbl_tran_measur_ultraextended,
+    2. reads tbl_mast_nodes + tbl_tran_measur_ultraextended + tbl_mast_categorydetail,
     3. flattens type-3 groups -> lines/sections/equipment/components,
        type-4 -> measurement_points.name, type-0/5 sensor -> sensor_model,
-    4. upserts (on the existing name keys), stamping synced_at = run start,
+    4. upserts on the UAS3 uid GUID (rename/move-safe), stamping synced_at = run start,
     5. hard-deletes this location's rows older than the run (mark-and-sweep).
+
+  Hierarchy matches on the stable uid, so renames/re-parents update in place
+  instead of delete+recreate. Synthesized shallow levels get a deterministic uid.
 
   crest_factor and alarm_level are computed by the database (generated columns).
   Requires the uas3_live_sync migration to be applied first (already done).
@@ -23,14 +26,15 @@
 # === CONFIG (internal use - hardcoded on purpose) ============================
 $LocalPg = @{
   Host = 'localhost'; Port = 5423; Db = 'postgres'; User = 'postgres'
-  Password = 'CHANGE_ME_local_uas3_password'
+  Password = 'PasswordPassword123'
 }
 $Supabase = @{
   Url        = 'https://gszfyelaezdftlwtzrjw.supabase.co'
-  ServiceKey = 'CHANGE_ME_supabase_service_role_key'
+  ServiceKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10'
 }
 # Optional explicit path to psql.exe; left blank = auto-detect from the PG install
-$PsqlExe = ''
+$PsqlExe = 'C:\Program Files\S.D.T. INTERNATIONAL\Ultranalysis Suite 3\Resources\BacRec\PostgreSQL18\psql.exe'
+
 
 $ErrorActionPreference = 'Stop'
 
@@ -39,6 +43,26 @@ function Key { $args -join '|' }   # composite map key (avoids pipe-in-string pa
 function Normalize([string]$s) { ($s -replace '[^A-Za-z0-9]', '').ToLower() }
 function NZ($v) { if ($null -eq $v -or $v -eq '') { $null } else { $v } }          # null if empty (uuid/text)
 function ND($v) { if ($null -eq $v -or $v -eq '') { $null } else { [double]$v } }   # null if empty (numeric)
+
+# Deterministic GUID from a string (MD5 -> uuid). Used to give synthesized levels
+# (shallow-tree padding with no source node) a stable uas_uid across syncs.
+function DetGuid([string]$s) {
+  $md5 = [System.Security.Cryptography.MD5]::Create()
+  try { $b = $md5.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($s)) } finally { $md5.Dispose() }
+  ([guid]::new($b)).ToString()
+}
+
+# Retry transient gateway/timeout errors (Supabase occasionally 502/503/504s under load).
+function Invoke-Retry([scriptblock]$Action, [int]$Tries = 5) {
+  for ($a = 1; $a -le $Tries; $a++) {
+    try { return & $Action }
+    catch {
+      $m = $_.Exception.Message
+      if ($a -eq $Tries -or $m -notmatch '50[234]|Bad Gateway|Service Unavailable|Gateway Time|timed out|timeout|actively refused') { throw }
+      Start-Sleep -Seconds ([Math]::Min(30, [Math]::Pow(2, $a)))
+    }
+  }
+}
 
 function Resolve-Psql {
   if ($script:PsqlExe -and (Test-Path $script:PsqlExe)) { return $script:PsqlExe }
@@ -82,13 +106,25 @@ function Supa-Upsert([string]$Table, [string]$OnConflict, [array]$Rows) {
   $h['Prefer'] = 'resolution=merge-duplicates,return=representation'
   $body = ConvertTo-Json @($Rows) -Depth 12
   $uri = "$($Supabase.Url)/rest/v1/$Table" + "?on_conflict=$OnConflict"
-  Invoke-RestMethod -Method Post -Uri $uri -Headers $h -Body $body
+  Invoke-Retry { Invoke-RestMethod -Method Post -Uri $uri -Headers $h -Body $body }
 }
 
 function Supa-Sweep([string]$Table, [string]$LocationId, [string]$RunStamp) {
   $stamp = [uri]::EscapeDataString($RunStamp)
   $uri = "$($Supabase.Url)/rest/v1/$Table" + "?location_id=eq.$LocationId" + "&synced_at=lt.$stamp"
   Invoke-RestMethod -Method Delete -Uri $uri -Headers (Supa-Headers) | Out-Null
+}
+
+function Supa-Patch([string]$Table, [string]$Query, $Obj) {
+  $h = Supa-Headers; $h['Content-Type'] = 'application/json'; $h['Prefer'] = 'return=minimal'
+  $uri = "$($Supabase.Url)/rest/v1/$Table" + "?$Query"
+  Invoke-Retry { Invoke-RestMethod -Method Patch -Uri $uri -Headers $h -Body (ConvertTo-Json $Obj -Depth 5) } | Out-Null
+}
+
+function Supa-UploadBytes([string]$Bucket, [string]$Path, [byte[]]$Bytes, [string]$ContentType) {
+  $h = Supa-Headers; $h['Content-Type'] = $ContentType; $h['x-upsert'] = 'true'
+  $uri = "$($Supabase.Url)/storage/v1/object/$Bucket/$Path"
+  Invoke-Retry { Invoke-RestMethod -Method Post -Uri $uri -Headers $h -Body $Bytes } | Out-Null
 }
 
 # === Resolve company + location from a schema name ===========================
@@ -136,18 +172,70 @@ function Build-PointRecords($Nodes) {
     $equipment = if ($g.Count -ge 3) { $g[2].node_name } else { $section }
     $component = if ($g.Count -ge 4) { ($g[3..($g.Count-1)] | ForEach-Object { $_.node_name }) -join ' / ' } else { $equipment }
 
+    # Every level gets a stable uas_uid: the real UAS3 node uid where it exists,
+    # else a deterministic uid from the name path (for synthesized shallow levels).
+    $lineUid = if ($g.Count -ge 1) { $g[0].uid } else { DetGuid("L~$line") }
+    $secUid  = if ($g.Count -ge 2) { $g[1].uid } else { DetGuid("S~$line~$section") }
+    $eqUid   = if ($g.Count -ge 3) { $g[2].uid } else { DetGuid("E~$line~$section~$equipment") }
+    $compUid = if ($g.Count -ge 4) { $g[3].uid } else { DetGuid("C~$line~$section~$equipment~$component") }
+
     $path = (@($groupsAll | ForEach-Object { $_.node_name }) + @($comp.node_name, $leaf.node_name)) -join ' \ '
 
     $records[$leaf.node_id] = [pscustomobject]@{
       LeafId = $leaf.node_id
       Line = $line; Section = $section; Equipment = $equipment; Component = $component
       MpName = $comp.node_name; SensorModel = $leaf.node_name
-      LineUid = $(if ($g.Count -ge 1) { $g[0].uid }); SectionUid = $(if ($g.Count -ge 2) { $g[1].uid })
-      EquipmentUid = $(if ($g.Count -ge 3) { $g[2].uid }); ComponentUid = $(if ($g.Count -ge 4) { $g[3].uid })
+      LineUid = $lineUid; SectionUid = $secUid; EquipmentUid = $eqUid; ComponentUid = $compUid
       MpUid = $comp.uid; SensorUid = $leaf.uid; FullPath = $path
     }
   }
   return $records
+}
+
+# === Upload FLAC waveform + FFT signals (idempotent, append-only) ============
+function Sync-Signals([string]$Schema, [string]$lid, $WantIds) {
+  # mes_ids are handled as STRINGS end-to-end (hashtable keys, SQL IN list, paths)
+  # to avoid any int-array cast surprises from the REST/CSV layers.
+  $want = @($WantIds | ForEach-Object { "$_" } | Where-Object { $_ })
+  if ($want.Count -eq 0) { return }
+
+  $uploaded = 0; $skipped = 0; $seen = 0
+  for ($i = 0; $i -lt $want.Count; $i += 100) {
+    $chunk  = @($want[$i..([Math]::Min($i + 99, $want.Count - 1))])
+    $inList = ($chunk -join ',')
+
+    # Let the DB tell us which of these still LACK a signal (server-side filter, so
+    # there is no client-side id matching to get wrong). Only those get uploaded.
+    $needRows = @(Supa-Get "measurements?location_id=eq.$lid&uas_mes_id=in.($inList)&waveform_path=is.null&select=uas_mes_id") |
+                Where-Object { $_ -and $null -ne $_.uas_mes_id }
+    $need = @($needRows | ForEach-Object { "$($_.uas_mes_id)" })
+    $seen += $chunk.Count
+    $skipped += ($chunk.Count - $need.Count)
+    if ($need.Count -eq 0) { continue }
+
+    $nlist = ($need -join ',')
+    $rows = Get-LocalRows `
+      "select w.mes_id, w.sample_rate, encode(w.wave_data,'base64') wav, encode(f.fft_data,'base64') fftd, f.fft_length, f.fft_windows_type from ""$Schema"".tbl_trans_wavefiles w left join ""$Schema"".tbl_trans_fft f on f.mes_id=w.mes_id where w.mes_id in ($nlist)" `
+      @('mes_id','sample_rate','wav','fftd','fft_length','fft_win')
+    foreach ($row in $rows) {
+      $mesId = $row.mes_id
+      $patch = @{}
+      if ($row.wav) {
+        Supa-UploadBytes 'uas-signals' "$lid/$mesId.flac" ([Convert]::FromBase64String($row.wav)) 'audio/flac'
+        $patch['waveform_path'] = "$lid/$mesId.flac"
+        $patch['sample_rate']   = if ($row.sample_rate) { [int]$row.sample_rate } else { $null }
+      }
+      if ($row.fftd) {
+        Supa-UploadBytes 'uas-signals' "$lid/$mesId.fft" ([Convert]::FromBase64String($row.fftd)) 'application/octet-stream'
+        $patch['fft_path']   = "$lid/$mesId.fft"
+        $patch['fft_length'] = if ($row.fft_length) { [int]$row.fft_length } else { $null }
+        $patch['fft_window'] = (NZ $row.fft_win)
+      }
+      if ($patch.Count -gt 0) { Supa-Patch 'measurements' "location_id=eq.$lid&uas_mes_id=eq.$mesId" $patch; $uploaded++ }
+    }
+    Write-Host "    signals: $seen/$($want.Count) checked · $uploaded uploaded · $skipped already present"
+  }
+  Write-Host "  signals: $uploaded uploaded, $skipped already present"
 }
 
 # === Sync one schema =========================================================
@@ -159,8 +247,14 @@ function Sync-Schema([string]$Schema, $Scope) {
     "select node_id, node_name, node_parentid, node_type_340, node_order, uid from ""$Schema"".tbl_mast_nodes where active" `
     @('node_id','node_name','node_parentid','node_type_340','node_order','uid')
   $meas = Get-LocalRows `
-    "select mes_id, node_id, mes_rms, mes_peak, mes_realpeak, mes_avgrpm, mes_op_id, mes_senserial, mes_instserial, mes_datetime from ""$Schema"".tbl_tran_measur_ultraextended where active" `
-    @('mes_id','node_id','rms','peak','realpeak','rpm','op','senserial','instserial','dt')
+    "select mes_id, node_id, mes_rms, mes_peak, mes_realpeak, mes_datetime from ""$Schema"".tbl_tran_measur_ultraextended where active" `
+    @('mes_id','node_id','rms','peak','realpeak','dt')
+
+  # per-point config: bearing rotating speed, keyed by the sensor-leaf node_id
+  $cat = Get-LocalRows `
+    "select node_id, bearing_rotating_speed from ""$Schema"".tbl_mast_categorydetail where active" `
+    @('node_id','rot')
+  $catMap = @{}; foreach ($c in $cat) { $catMap[$c.node_id] = (ND $c.rot) }
 
   $typeCounts = ($nodes | Group-Object node_type_340 | ForEach-Object { "t$($_.Name)=$($_.Count)" }) -join ' '
   Write-Host ("  nodes {0} ({1}); measurement rows {2}" -f @($nodes).Count, $typeCounts, @($meas).Count)
@@ -180,75 +274,71 @@ function Sync-Schema([string]$Schema, $Scope) {
 
   $base = @{ company_id = $cid; location_id = $lid; synced_at = $run }
 
+  # All hierarchy levels upsert on the UAS3 uid GUID (rename/move-safe), and every
+  # returned row is mapped back by that same uid.
+
   # 1 lines
-  $lineRows = $records.Values | Sort-Object Line -Unique | ForEach-Object {
-    $base + @{ name = $_.Line; uas_uid = (NZ $_.LineUid) } }
+  $lineRows = $records.Values | Sort-Object LineUid -Unique | ForEach-Object {
+    $base + @{ name = $_.Line; uas_uid = $_.LineUid } }
   $lineMap = @{}
-  (Supa-Upsert 'lines' 'location_id,name' $lineRows) | ForEach-Object { $lineMap[$_.name] = $_.id }
+  (Supa-Upsert 'lines' 'uas_uid' $lineRows) | ForEach-Object { $lineMap[$_.uas_uid] = $_.id }
 
-  # 2 sections (key: line_id, uas_name)
-  $secRows = $records.Values | Sort-Object Line,Section -Unique | ForEach-Object {
-    $base + @{ line_id = $lineMap[$_.Line]; uas_name = $_.Section; uas_uid = (NZ $_.SectionUid) } }
+  # 2 sections
+  $secRows = $records.Values | Sort-Object SectionUid -Unique | ForEach-Object {
+    $base + @{ line_id = $lineMap[$_.LineUid]; uas_name = $_.Section; uas_uid = $_.SectionUid } }
   $secMap = @{}
-  (Supa-Upsert 'sections' 'line_id,uas_name' $secRows) | ForEach-Object {
-    $secMap[(Key $_.line_id $_.uas_name)] = $_.id }
+  (Supa-Upsert 'sections' 'uas_uid' $secRows) | ForEach-Object { $secMap[$_.uas_uid] = $_.id }
 
-  # 3 equipment (key: section_id, tag)
-  $eqRows = $records.Values | Sort-Object Line,Section,Equipment -Unique | ForEach-Object {
-    $sid = $secMap[(Key $lineMap[$_.Line] $_.Section)]
-    $base + @{ section_id = $sid; tag = $_.Equipment; uas_uid = (NZ $_.EquipmentUid) } }
+  # 3 equipment
+  $eqRows = $records.Values | Sort-Object EquipmentUid -Unique | ForEach-Object {
+    $base + @{ section_id = $secMap[$_.SectionUid]; tag = $_.Equipment; uas_uid = $_.EquipmentUid } }
   $eqMap = @{}
-  (Supa-Upsert 'equipment' 'section_id,tag' $eqRows) | ForEach-Object {
-    $eqMap[(Key $_.section_id $_.tag)] = $_.id }
+  (Supa-Upsert 'equipment' 'uas_uid' $eqRows) | ForEach-Object { $eqMap[$_.uas_uid] = $_.id }
 
-  # 4 components (key: equipment_id, name)
-  $compRows = $records.Values | Sort-Object Line,Section,Equipment,Component -Unique | ForEach-Object {
-    $sid = $secMap[(Key $lineMap[$_.Line] $_.Section)]
-    $eid = $eqMap[(Key $sid $_.Equipment)]
-    $base + @{ equipment_id = $eid; name = $_.Component; uas_uid = (NZ $_.ComponentUid) } }
+  # 4 components
+  $compRows = $records.Values | Sort-Object ComponentUid -Unique | ForEach-Object {
+    $base + @{ equipment_id = $eqMap[$_.EquipmentUid]; name = $_.Component; uas_uid = $_.ComponentUid } }
   $compMap = @{}
-  (Supa-Upsert 'components' 'equipment_id,name' $compRows) | ForEach-Object {
-    $compMap[(Key $_.equipment_id $_.name)] = $_.id }
+  (Supa-Upsert 'components' 'uas_uid' $compRows) | ForEach-Object { $compMap[$_.uas_uid] = $_.id }
 
-  # 5 measurement_points (key: component_id, name)
-  $mpRows = New-Object System.Collections.ArrayList
-  $leafToMpKey = @{}
-  foreach ($r in $records.Values) {
-    $sid = $secMap[(Key $lineMap[$r.Line] $r.Section)]
-    $eid = $eqMap[(Key $sid $r.Equipment)]
-    $compId = $compMap[(Key $eid $r.Component)]
-    [void]$mpRows.Add($base + @{
-      component_id = $compId; name = $r.MpName; sensor_model = $r.SensorModel
-      uas_uid = (NZ $r.MpUid); uas_sensor_uid = (NZ $r.SensorUid); uas_full_path = $r.FullPath })
-    $leafToMpKey[$r.LeafId] = (Key $compId $r.MpName)
-  }
-  $mpDistinct = $mpRows | Sort-Object { Key $_.component_id $_.name } -Unique
+  # 5 measurement_points (key: uas_uid = the type-4 node uid)
+  $mpRows = $records.Values | Sort-Object MpUid -Unique | ForEach-Object {
+    $base + @{ component_id = $compMap[$_.ComponentUid]; name = $_.MpName; sensor_model = $_.SensorModel
+      uas_uid = $_.MpUid; uas_sensor_uid = $_.SensorUid; uas_full_path = $_.FullPath
+      bearing_rotating_speed = $catMap[$_.LeafId] } }
   $mpMap = @{}
-  (Supa-Upsert 'measurement_points' 'component_id,name' $mpDistinct) | ForEach-Object {
-    $mpMap[(Key $_.component_id $_.name)] = $_.id }
+  (Supa-Upsert 'measurement_points' 'uas_uid' $mpRows) | ForEach-Object { $mpMap[$_.uas_uid] = $_.id }
+
+  # sensor-leaf node_id -> measurement_point id (via the type-4 MpUid)
+  $leafToMp = @{}
+  foreach ($r in $records.Values) { $leafToMp[$r.LeafId] = $mpMap[$r.MpUid] }
 
   # 6 measurements - dedupe to latest reading per (point, day)
   $best = @{}
   foreach ($m in $meas) {
-    $mpKey = $leafToMpKey[$m.node_id]; if (-not $mpKey) { continue }
+    $mpId = $leafToMp[$m.node_id]; if (-not $mpId) { continue }
     $dt = [datetime]::Parse($m.dt, [Globalization.CultureInfo]::InvariantCulture)
     $day = $dt.ToString('yyyy-MM-dd')
-    $k = (Key $mpKey $day)
+    $k = (Key $mpId $day)
     if (-not $best.ContainsKey($k) -or $dt -gt $best[$k].DT) {
-      $best[$k] = [pscustomobject]@{ M = $m; DT = $dt; MpKey = $mpKey; Day = $day }
+      $best[$k] = [pscustomobject]@{ M = $m; DT = $dt; MpId = $mpId; Day = $day }
     }
   }
   $measRows = $best.Values | ForEach-Object {
-    @{ measurement_point_id = $mpMap[$_.MpKey]; company_id = $cid; location_id = $lid; synced_at = $run
+    @{ measurement_point_id = $_.MpId; company_id = $cid; location_id = $lid; synced_at = $run
        overall_rms = (ND $_.M.rms); max_rms = (ND $_.M.peak); peak = (ND $_.M.realpeak)
        uas_mes_id = [int]$_.M.mes_id
        measured_at = $_.Day; measured_datetime = $_.DT.ToString('o') } }
   Supa-Upsert 'measurements' 'measurement_point_id,measured_at' $measRows | Out-Null
 
   # 7 mark-and-sweep: hard delete anything for this location not touched this run
+  #    (signals in the uas-signals bucket are append-only and never swept)
   foreach ($t in 'measurements','measurement_points','components','equipment','sections','lines') {
     Supa-Sweep $t $lid $run
   }
+
+  # 8 signals: FLAC waveform + FFT per kept measurement (idempotent, append-only)
+  Sync-Signals $Schema $lid @($best.Values | ForEach-Object { $_.M.mes_id })
 
   Write-Host ("  lines {0}  sections {1}  equipment {2}  components {3}  points {4}  measurements {5}" -f `
     $lineMap.Count, $secMap.Count, $eqMap.Count, $compMap.Count, $mpMap.Count, @($measRows).Count)
