@@ -12,6 +12,8 @@ dist
 dist-ssr
 *.local
 
+scripts/sync-uas3.ps1
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
