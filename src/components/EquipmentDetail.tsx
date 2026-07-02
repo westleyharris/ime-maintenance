@@ -117,11 +117,12 @@ function TabBtn({ active, label, count, onClick }: { active: boolean; label: str
 
 // ── Overview tab ─────────────────────────────────────────────────────────────
 
-function OverviewTab({ info, onImageUpload, uploading, isCompliant }: {
+function OverviewTab({ info, onImageUpload, uploading, isCompliant, neverMeasured }: {
   info: EquipmentInfo | null;
   onImageUpload: (file: File) => void;
   uploading: boolean;
-  isCompliant: boolean | null;
+  isCompliant: boolean;
+  neverMeasured: boolean;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const dash = (v: string | null | undefined) => v || '—';
@@ -201,11 +202,9 @@ function OverviewTab({ info, onImageUpload, uploading, isCompliant }: {
             {/* Compliance badge */}
             <div>
               <p className="text-xs text-gray-400 mb-0.5">Route Compliance</p>
-              {isCompliant === null
-                ? <span className="inline-flex text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-400">No measurements</span>
-                : isCompliant
-                  ? <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">✓ In Compliance</span>
-                  : <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">✕ Out of Compliance</span>
+              {isCompliant
+                ? <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">✓ In Compliance</span>
+                : <span className="inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-red-100 text-red-700">✕ Out of Compliance{neverMeasured ? ' — never measured' : ''}</span>
               }
             </div>
           </div>
@@ -234,7 +233,7 @@ interface PointDetail {
   pointName: string;
   alarmLevel: string;
   overallRms: number | null;
-  peak: number | null;
+  crestFactor: number | null;
 }
 
 interface ComponentDetail {
@@ -290,7 +289,7 @@ function AssetHealthTab({ components, notes, info }: {
           pointName: mp.name,
           alarmLevel: m.alarm_level,
           overallRms: m.overall_rms,
-          peak: m.peak,
+          crestFactor: m.crest_factor,
         });
       }
     }
@@ -479,8 +478,8 @@ function AssetHealthTab({ components, notes, info }: {
                                             {pt.overallRms != null && (
                                               <span className="text-xs text-gray-400 tabular-nums">{pt.overallRms.toFixed(2)} RMS</span>
                                             )}
-                                            {pt.peak != null && (
-                                              <span className="text-xs text-gray-300 tabular-nums">{pt.peak.toFixed(2)} pk</span>
+                                            {pt.crestFactor != null && (
+                                              <span className="text-xs text-gray-300 tabular-nums">{pt.crestFactor.toFixed(2)} cf</span>
                                             )}
                                             <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${A(pt.alarmLevel).badge}`}>
                                               {pt.alarmLevel}
@@ -1452,12 +1451,15 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
     ? findings.filter(f => new Date(f.measuredAt).getTime() > replacedTs)
     : findings;
 
-  // Route compliance based on current measurements only
+  // Route compliance based on current measurements only.
+  // No measurements at all counts as OUT of compliance — the asset has never
+  // been measured, which is the worst compliance state, not a neutral one.
   const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
   const latestMeasMs  = currentMeas.length > 0
     ? Math.max(...currentMeas.map(m => new Date(m.measured_at).getTime()))
     : null;
-  const isCompliant   = latestMeasMs != null ? (Date.now() - latestMeasMs) <= COMPLIANCE_MS : null;
+  const isCompliant   = latestMeasMs != null && (Date.now() - latestMeasMs) <= COMPLIANCE_MS;
+  const neverMeasured = latestMeasMs == null;
 
   // Prior replacement note (for Overview prior-asset card)
   const priorReplacementNote = notes.find(n => n.note_type === 'replacement') ?? null;
@@ -1527,7 +1529,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         <>
           {activeTab === 'overview' && (
             <div className="space-y-4">
-              <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} />
+              <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} neverMeasured={neverMeasured} />
               {priorReplacementNote && (
                 <PriorAssetCard note={priorReplacementNote} />
               )}

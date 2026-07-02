@@ -26,6 +26,7 @@ interface MeasurementRow {
     components: {
       name: string;
       equipment: {
+        id: string;
         tag: string;
         sections: {
           uas_name: string;
@@ -45,6 +46,7 @@ interface FlatRow {
   location: string;
   line: string;
   section: string;
+  equipmentId: string;
   equipmentTag: string;
   component: string;
   point: string;
@@ -62,6 +64,7 @@ interface FlatRow {
 }
 
 interface EquipmentGroup {
+  id: string;
   tag: string;
   line: string;
   section: string;
@@ -85,6 +88,7 @@ function flatten(m: MeasurementRow): FlatRow | null {
     location: sec.lines?.locations?.name ?? '—',
     line: sec.lines?.name ?? '—',
     section: sec.uas_name,
+    equipmentId: eq.id,
     equipmentTag: eq.tag,
     component: comp.name,
     point: mp.name,
@@ -132,12 +136,14 @@ function fmtDate(iso: string) {
 // ── Group rows by equipment ───────────────────────────────────────────────────
 
 function groupByEquipment(rows: FlatRow[]): EquipmentGroup[] {
+  // Key on the equipment id, NOT the tag — the same tag can exist on several
+  // lines (e.g. an M101 on both L1 and L3 Conveyors) and must not be merged.
   const map = new Map<string, EquipmentGroup>();
   for (const r of rows) {
-    if (!map.has(r.equipmentTag)) {
-      map.set(r.equipmentTag, { tag: r.equipmentTag, line: r.line, section: r.section, worstAlarm: 'Normal', worstRms: 0, points: [] });
+    if (!map.has(r.equipmentId)) {
+      map.set(r.equipmentId, { id: r.equipmentId, tag: r.equipmentTag, line: r.line, section: r.section, worstAlarm: 'Normal', worstRms: 0, points: [] });
     }
-    const g = map.get(r.equipmentTag)!;
+    const g = map.get(r.equipmentId)!;
     g.points.push(r);
     if (ALARM_RANK[r.alarmLevel] > ALARM_RANK[g.worstAlarm]) g.worstAlarm = r.alarmLevel;
     if ((r.overallRms ?? 0) > g.worstRms) g.worstRms = r.overallRms ?? 0;
@@ -451,7 +457,7 @@ export default function Ultrasound() {
             components (
               name,
               equipment (
-                tag,
+                id, tag,
                 sections (
                   uas_name,
                   lines (
@@ -666,7 +672,7 @@ export default function Ultrasound() {
             {groups.map(g => {
               const cfg = A(g.worstAlarm);
               return (
-                <div key={g.tag} className={`rounded-xl border border-gray-200 border-l-4 overflow-hidden ${cfg.border.replace('border-', 'border-l-')}`}>
+                <div key={g.id} className={`rounded-xl border border-gray-200 border-l-4 overflow-hidden ${cfg.border.replace('border-', 'border-l-')}`}>
                   {/* Equipment header */}
                   <div className={`flex items-center justify-between px-4 py-3 ${cfg.bg}`}>
                     <div className="flex items-center gap-3">

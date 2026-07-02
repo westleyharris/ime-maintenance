@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, Loader2, X, ClipboardPlus, Building2, ExternalLink,
+  Search, Loader2, X, ClipboardPlus, Building2, ExternalLink, Download,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
 import { useAuth } from '../context/AuthContext';
+import { exportToExcel } from '../utils/exportExcel';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -190,6 +191,31 @@ export default function Findings() {
   const dangerCount = rows.filter(r => r.condition === 'Danger').length;
   const warningCount = rows.filter(r => r.condition === 'Warning').length;
 
+  // Export exactly what the table currently shows (filters + sort applied)
+  const handleExport = () => exportToExcel(
+    visible.map((r, i) => ({
+      '#': i + 1,
+      'Area': r.line,
+      'Functional Location': r.section,
+      'Machine': r.equipment,
+      'Component': r.component,
+      'Point': r.point,
+      'Condition': r.condition,
+      'Finding': r.finding ?? '',
+      'Recommendation': r.recommendation ?? '',
+      'Generated TAG': r.generatedTag ?? '',
+      'SAP No': r.sapNo ?? '',
+      'WO Text': r.woText ?? '',
+      'Bearings Info': r.bearingsInfo ?? '',
+      'Comments': r.comments ?? '',
+      'Work Order': r.woNumber ?? '',
+      'Created': fmtDate(r.creationDate),
+      'Status': STATUS_LABEL[r.status],
+    })),
+    'Findings',
+    'findings',
+  );
+
   if (!selectedCompanyId) {
     return (
       <div className="flex flex-col items-center justify-center h-72 text-gray-400 gap-3">
@@ -243,6 +269,14 @@ export default function Findings() {
         <span className="text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
           <strong className="text-gray-800">{visible.length}</strong> findings
         </span>
+        <button
+          onClick={handleExport}
+          disabled={visible.length === 0}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Export the current list to Excel"
+        >
+          <Download size={14} /> Export
+        </button>
       </div>
 
       {/* Table */}

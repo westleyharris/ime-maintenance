@@ -214,6 +214,7 @@ export default function Dashboard() {
   const { selectedCompanyId, selectedLocationId, selectedLineId, lines } = useScope();
 
   const [rows, setRows]               = useState<FlatAlarm[]>([]);
+  const [equipList, setEquipList]     = useState<{ id: string; status: string; line: string }[]>([]);
   const [loading, setLoading]         = useState(false);
   const [lastReading, setLastReading] = useState<string | null>(null);
   const [nextVisit, setNextVisit]     = useState<string | null>(null);
@@ -250,8 +251,20 @@ export default function Dashboard() {
   };
 
   const fetchData = useCallback(async () => {
-    if (!selectedCompanyId) { setRows([]); setLastReading(null); return; }
+    if (!selectedCompanyId) { setRows([]); setEquipList([]); setLastReading(null); return; }
     setLoading(true);
+
+    // Full equipment list (independent of measurements) so route compliance can
+    // count assets that have NEVER been measured as out of compliance.
+    const eqPromise = fetchAllRows<{ id: string; status: string | null; sections: { lines: { name: string } | null } | null }>((from, to) => {
+      let q = supabase
+        .from('equipment')
+        .select('id, status, sections ( lines ( name ) )')
+        .eq('company_id', selectedCompanyId)
+        .range(from, to);
+      if (selectedLocationId) q = q.eq('location_id', selectedLocationId);
+      return q as unknown as PromiseLike<{ data: { id: string; status: string | null; sections: { lines: { name: string } | null } | null }[] | null; error: unknown }>;
+    });
 
     const { rows: data, error } = await fetchAllRows<MeasurementRow>((from, to) => {
       let q = supabase
@@ -294,6 +307,15 @@ export default function Dashboard() {
       setRows(flat);
       const latest = flat.reduce<string | null>((acc, r) => (!acc || r.measuredAt > acc ? r.measuredAt : acc), null);
       setLastReading(latest);
+    }
+
+    const { rows: eqRows, error: eqError } = await eqPromise;
+    if (!eqError) {
+      setEquipList(eqRows.map(e => ({
+        id: e.id,
+        status: e.status ?? 'active',
+        line: e.sections?.lines?.name ?? '—',
+      })));
     }
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
@@ -357,15 +379,24 @@ export default function Dashboard() {
     .map(l => ({ name: l, value: pieSource[l].length, color: ALARM[l].color }))
     .filter(d => d.value > 0);
 
-  // Route compliance (90-day window, always equipment-based)
+  // Route compliance (90-day window, always equipment-based).
+  // Denominator is the FULL active equipment list — an asset with no
+  // measurements at all has never been visited and counts as out of compliance.
+  // Keyed by equipment id (not tag): the same tag can exist on several lines.
   const COMPLIANCE_MS = 90 * 24 * 60 * 60 * 1000;
   const latestByEquipment = new Map<string, number>();
   activeRows.forEach(r => {
     const t = new Date(r.measuredAt).getTime();
-    if ((latestByEquipment.get(r.equipmentTag) ?? 0) < t) latestByEquipment.set(r.equipmentTag, t);
+    if ((latestByEquipment.get(r.equipmentId) ?? 0) < t) latestByEquipment.set(r.equipmentId, t);
   });
-  const totalMonitored    = latestByEquipment.size;
-  const compliantCount    = Array.from(latestByEquipment.values()).filter(t => Date.now() - t <= COMPLIANCE_MS).length;
+  const activeEquipment = equipList.filter(e =>
+    e.status !== 'inactive' && (!selectedLineName || e.line === selectedLineName)
+  );
+  const totalMonitored    = activeEquipment.length;
+  const compliantCount    = activeEquipment.filter(e => {
+    const t = latestByEquipment.get(e.id);
+    return t != null && Date.now() - t <= COMPLIANCE_MS;
+  }).length;
   const nonCompliantCount = totalMonitored - compliantCount;
   const compliancePct     = totalMonitored > 0 ? Math.round((compliantCount / totalMonitored) * 100) : 0;
   const compliantPct      = totalMonitored > 0 ? (compliantCount / totalMonitored) * 100 : 0;

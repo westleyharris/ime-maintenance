@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Trash2, Building2, ClipboardList } from 'lucide-react';
+import { Loader2, Trash2, Building2, ClipboardList, Download } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
 import { useAuth } from '../context/AuthContext';
+import { exportToExcel } from '../utils/exportExcel';
 
 type WOStatus = 'open' | 'in_progress' | 'closed' | 'cancelled';
 type Priority = 'low' | 'medium' | 'high' | 'critical';
@@ -139,6 +140,27 @@ export default function WorkOrders() {
     return true;
   });
 
+  // Export exactly what the table currently shows (filters applied)
+  const handleExport = () => exportToExcel(
+    visible.map(w => ({
+      'WO #': w.woNumber,
+      'Asset': w.equipment,
+      'Line': w.line,
+      'Title': w.title ?? '',
+      'Description': w.description ?? '',
+      'Finding Condition': w.findingCondition ?? '',
+      'Finding Point': w.findingPoint ?? '',
+      'Priority': w.priority,
+      'Status': STATUS_LABEL[w.status],
+      'Assignee': w.assignee ?? '',
+      'SAP No': w.sapNo ?? '',
+      'Due': fmtDate(w.dueDate),
+      'Created': fmtDate(w.createdAt),
+    })),
+    'Work Orders',
+    'work_orders',
+  );
+
   if (!selectedCompanyId) {
     return (
       <div className="flex flex-col items-center justify-center h-72 text-gray-400 gap-3">
@@ -182,6 +204,14 @@ export default function WorkOrders() {
         <span className="text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
           <strong className="text-gray-800">{visible.length}</strong> work orders
         </span>
+        <button
+          onClick={handleExport}
+          disabled={visible.length === 0}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          title="Export the current list to Excel"
+        >
+          <Download size={14} /> Export
+        </button>
       </div>
 
       <div className="overflow-x-auto border border-gray-100 rounded-2xl bg-white shadow-sm">
