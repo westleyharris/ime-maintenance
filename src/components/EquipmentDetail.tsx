@@ -30,7 +30,7 @@ interface EquipmentInfo {
 
 interface EquipmentNote {
   id: string;
-  note_type: 'general' | 'status_change' | 'replacement';
+  note_type: 'general' | 'status_change' | 'replacement' | 'recommendation';
   message: string | null;
   metadata: Record<string, unknown> | null;
   created_at: string;
@@ -251,7 +251,7 @@ interface DateBucket {
 
 type HealthTimelineEntry =
   | { kind: 'measurement'; date: string } & DateBucket
-  | { kind: 'activity'; date: string; noteType: string; message: string | null; id: string };
+  | { kind: 'activity'; date: string; noteType: string; message: string | null; id: string; metadata: Record<string, unknown> | null };
 
 function AssetHealthTab({ components, notes, info }: {
   components: ComponentData[];
@@ -305,7 +305,7 @@ function AssetHealthTab({ components, notes, info }: {
 
   const allEntries: HealthTimelineEntry[] = [
     ...Array.from(byDate.entries()).map(([date, d]) => ({ kind: 'measurement' as const, date, ...d })),
-    ...notes.map(n => ({ kind: 'activity' as const, date: n.created_at.slice(0, 10), noteType: n.note_type, message: n.message, id: n.id })),
+    ...notes.map(n => ({ kind: 'activity' as const, date: n.created_at.slice(0, 10), noteType: n.note_type, message: n.message, id: n.id, metadata: n.metadata })),
   ].sort((a, b) => b.date.localeCompare(a.date));
 
   const noData = allMeas.length === 0 && notes.length === 0;
@@ -419,7 +419,7 @@ function AssetHealthTab({ components, notes, info }: {
                     {entry.kind === 'measurement' ? (
                       <div className={`relative z-10 w-5 h-5 mt-0.5 rounded-full shrink-0 ring-4 ring-[#eef2f7] ${archived ? 'bg-gray-400' : dotColor(entry.worstLevel)}`} />
                     ) : (
-                      <div className="relative z-10 w-5 h-5 mt-0.5 rounded-sm shrink-0 ring-4 ring-[#eef2f7] bg-white border-2 border-gray-400" />
+                      <div className={`relative z-10 w-5 h-5 mt-0.5 rounded-sm shrink-0 ring-4 ring-[#eef2f7] bg-white border-2 ${entry.noteType === 'recommendation' ? 'border-primary' : 'border-gray-400'}`} />
                     )}
 
                     {/* Text */}
@@ -492,6 +492,26 @@ function AssetHealthTab({ components, notes, info }: {
                                 );
                               })}
                             </div>
+                          )}
+                        </>
+                      ) : entry.noteType === 'recommendation' ? (
+                        <>
+                          <div className="flex items-center gap-2.5">
+                            <p className="text-lg font-bold text-gray-900 leading-tight">Analyst Recommendation</p>
+                            {typeof entry.metadata?.condition === 'string' && (
+                              <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${A(entry.metadata.condition as string).badge}`}>
+                                {entry.metadata.condition as string}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-sm text-gray-500 mt-1">
+                            {fmtDate(entry.date)}
+                            {typeof entry.metadata?.point === 'string' ? ` · ${entry.metadata.component ?? ''} ${entry.metadata.point}`.trimEnd() : ''}
+                          </p>
+                          {entry.message && (
+                            <p className="mt-2 px-3 py-2 rounded-lg bg-blue-50/60 border border-blue-100 text-sm text-gray-700">
+                              {entry.message}
+                            </p>
                           )}
                         </>
                       ) : (

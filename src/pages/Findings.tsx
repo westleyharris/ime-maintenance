@@ -380,6 +380,7 @@ function FindingModal({
   const [comments, setComments]             = useState(finding.comments ?? '');
   const [saving, setSaving] = useState(false);
   const [showWO, setShowWO] = useState(defaultShowWO);
+  const [woError, setWoError] = useState<string | null>(null);
 
   // Work-order form
   const [woTitle, setWoTitle]   = useState(finding.woText ?? `PdM Finding - ${finding.equipment} ${finding.point}`);
@@ -392,6 +393,25 @@ function FindingModal({
   const [woDue, setWoDue]           = useState('');
   const [woSap, setWoSap]           = useState(finding.sapNo ?? '');
 
+  // When the analyst fills (or changes) the recommendation, record it as an
+  // asset-timeline event. Written to equipment_notes so it survives the
+  // finding later recovering and being deleted by reconcile_findings().
+  const logRecommendationNote = async () => {
+    const rec = recommendation.trim();
+    if (!rec || rec === (finding.recommendation ?? '').trim() || !finding.equipmentId) return;
+    await supabase.from('equipment_notes').insert({
+      equipment_id: finding.equipmentId,
+      note_type: 'recommendation',
+      message: rec,
+      metadata: {
+        finding_id: finding.id,
+        condition: finding.condition,
+        component: finding.component,
+        point: finding.point,
+      },
+    });
+  };
+
   const saveFields = async () => {
     setSaving(true);
     await supabase.from('findings').update({
@@ -402,12 +422,34 @@ function FindingModal({
       comments: comments || null,
       updated_at: new Date().toISOString(),
     }).eq('id', finding.id);
+    await logRecommendationNote();
     setSaving(false);
     onSaved();
   };
 
   const createWorkOrder = async () => {
+    setWoError(null);
+    // A work order needs the expert recommendation filled out first
+    if (!recommendation.trim()) {
+      setWoError('Fill out the expert recommendation before creating a work order (use Back to edit it).');
+      return;
+    }
     setSaving(true);
+
+    // One active WO per asset — the old one must be closed first
+    if (finding.equipmentId) {
+      const { data: existing } = await supabase
+        .from('work_orders')
+        .select('wo_number')
+        .eq('equipment_id', finding.equipmentId)
+        .in('status', ['open', 'in_progress']);
+      if (existing && existing.length > 0) {
+        setWoError(`This asset already has an active work order (${existing.map(e => e.wo_number).join(', ')}). Close it before creating a new one.`);
+        setSaving(false);
+        return;
+      }
+    }
+
     const { data: wo, error } = await supabase.from('work_orders').insert({
       company_id: companyId,
       location_id: finding.locationId,
@@ -423,7 +465,16 @@ function FindingModal({
       created_by: userId,
     }).select('id').single();
 
-    if (!error && wo) {
+    if (error) {
+      // 23505 = the DB trigger blocked a second active WO (race safety net)
+      setWoError((error as { code?: string }).code === '23505'
+        ? 'This asset already has an active work order. Close it before creating a new one.'
+        : `Could not create work order: ${(error as { message?: string }).message ?? 'unknown error'}`);
+      setSaving(false);
+      return;
+    }
+
+    if (wo) {
       await supabase.from('findings').update({
         status: 'wo_created',
         work_order_id: wo.id,
@@ -432,6 +483,7 @@ function FindingModal({
         recommendation: recommendation || null,
         updated_at: new Date().toISOString(),
       }).eq('id', finding.id);
+      await logRecommendationNote();
     }
     setSaving(false);
     onSaved();
@@ -457,6 +509,11 @@ function FindingModal({
 
         {/* Body */}
         <div className="p-6 overflow-y-auto space-y-4">
+          {woError && (
+            <div className="px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+              {woError}
+            </div>
+          )}
           {!showWO ? (
             <>
               <Field label="Recommendation (expert)">
@@ -525,7 +582,7 @@ function FindingModal({
           <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
             {showWO ? (
               <>
-                <button onClick={() => setShowWO(false)} className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-500 hover:bg-gray-100">Back</button>
+                <button onClick={() => { setShowWO(false); setWoError(null); }} className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-500 hover:bg-gray-100">Back</button>
                 <button onClick={createWorkOrder} disabled={saving}
                   className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light disabled:opacity-50">
                   {saving ? <Loader2 size={14} className="animate-spin" /> : <ClipboardPlus size={14} />} Create Work Order
@@ -543,7 +600,15 @@ function FindingModal({
                     <ExternalLink size={14} /> View {finding.woNumber}
                   </button>
                 ) : (
-                  <button onClick={() => setShowWO(true)}
+                  <button
+                    onClick={() => {
+                      if (!recommendation.trim()) {
+                        setWoError('Fill out the expert recommendation before creating a work order.');
+                        return;
+                      }
+                      setWoError(null);
+                      setShowWO(true);
+                    }}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light">
                     <ClipboardPlus size={14} /> New Work Order
                   </button>

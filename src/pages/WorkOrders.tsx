@@ -17,6 +17,7 @@ interface WORow {
   status: WOStatus;
   assignee: string | null;
   sapNo: string | null;
+  cmmsWoNo: string | null;
   dueDate: string | null;
   createdAt: string;
   findingId: string | null;
@@ -35,6 +36,7 @@ interface RawWO {
   status: WOStatus;
   assignee: string | null;
   sap_no: string | null;
+  cmms_wo_no: string | null;
   due_date: string | null;
   created_at: string;
   finding_id: string | null;
@@ -83,7 +85,7 @@ export default function WorkOrders() {
     let q = supabase
       .from('work_orders')
       .select(`
-        id, wo_number, title, description, priority, status, assignee, sap_no, due_date, created_at, finding_id,
+        id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, due_date, created_at, finding_id,
         equipment ( tag, sections ( lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId)
@@ -105,7 +107,7 @@ export default function WorkOrders() {
       return {
         id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
         priority: w.priority, status: w.status, assignee: w.assignee, sapNo: w.sap_no,
-        dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
+        cmmsWoNo: w.cmms_wo_no, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
         equipment: w.equipment?.tag ?? '—',
         line: w.equipment?.sections?.lines?.name ?? '—',
         findingCondition: f?.condition ?? null,
@@ -123,6 +125,13 @@ export default function WorkOrders() {
     setRows(rs => rs.map(r => r.id === id ? { ...r, status } : r));
   };
 
+  // Manually-entered CMMS work order number — saved on blur / Enter
+  const updateCmms = async (id: string, value: string) => {
+    const cmms = value.trim() || null;
+    await supabase.from('work_orders').update({ cmms_wo_no: cmms, updated_at: new Date().toISOString() }).eq('id', id);
+    setRows(rs => rs.map(r => r.id === id ? { ...r, cmmsWoNo: cmms } : r));
+  };
+
   const remove = async (id: string, findingId: string | null) => {
     if (!confirm('Delete this work order?')) return;
     await supabase.from('work_orders').delete().eq('id', id);
@@ -135,7 +144,7 @@ export default function WorkOrders() {
     if (filterPriority && w.priority !== filterPriority) return false;
     if (search) {
       const q = search.toLowerCase();
-      if (!`${w.woNumber} ${w.title ?? ''} ${w.equipment} ${w.assignee ?? ''}`.toLowerCase().includes(q)) return false;
+      if (!`${w.woNumber} ${w.cmmsWoNo ?? ''} ${w.title ?? ''} ${w.equipment} ${w.assignee ?? ''}`.toLowerCase().includes(q)) return false;
     }
     return true;
   });
@@ -144,6 +153,7 @@ export default function WorkOrders() {
   const handleExport = () => exportToExcel(
     visible.map(w => ({
       'WO #': w.woNumber,
+      'CMMS WO #': w.cmmsWoNo ?? '',
       'Asset': w.equipment,
       'Line': w.line,
       'Title': w.title ?? '',
@@ -228,6 +238,7 @@ export default function WorkOrders() {
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60 text-[10px] font-bold uppercase tracking-wider text-gray-400">
                 <th className="px-3 py-3 text-left">WO #</th>
+                <th className="px-3 py-3 text-left">CMMS WO #</th>
                 <th className="px-3 py-3 text-left">Asset</th>
                 <th className="px-3 py-3 text-left">Title</th>
                 <th className="px-3 py-3 text-left">Finding</th>
@@ -243,6 +254,20 @@ export default function WorkOrders() {
               {visible.map(w => (
                 <tr key={w.id} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
                   <td className="px-3 py-2.5 font-mono font-semibold text-primary">{w.woNumber}</td>
+                  <td className="px-3 py-2.5">
+                    {isAdmin ? (
+                      <input
+                        key={`${w.id}-${w.cmmsWoNo ?? ''}`}
+                        defaultValue={w.cmmsWoNo ?? ''}
+                        placeholder="—"
+                        onBlur={e => { if (e.target.value.trim() !== (w.cmmsWoNo ?? '')) updateCmms(w.id, e.target.value); }}
+                        onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                        className="w-24 px-2 py-1 rounded-md border border-transparent hover:border-gray-200 focus:border-gray-300 font-mono text-xs text-gray-700 bg-transparent outline-none focus:ring-2 focus:ring-primary/20"
+                      />
+                    ) : (
+                      <span className="font-mono text-xs text-gray-600">{w.cmmsWoNo ?? '—'}</span>
+                    )}
+                  </td>
                   <td className="px-3 py-2.5">
                     <span className="font-mono font-semibold text-gray-800">{w.equipment}</span>
                     <span className="block text-[10px] text-gray-400">{w.line}</span>
