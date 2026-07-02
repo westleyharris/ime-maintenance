@@ -176,6 +176,15 @@ const ALARM_DOT: Record<string, string> = {
   Danger: '#ef4444', Warning: '#f97316', Alert: '#60a5fa', Normal: '#22c55e',
 };
 
+// Alarm cutoffs are driven by crest factor (the alarm_level generated column):
+// <10 Normal · 10–12 Alert · 12–14 Warning · ≥14 Danger. Shown as dotted
+// reference lines on the Crest Factor trend so users see where a point sits.
+const CF_THRESHOLDS = [
+  { y: 10, label: 'Alert',   color: '#60a5fa' },
+  { y: 12, label: 'Warning', color: '#f97316' },
+  { y: 14, label: 'Danger',  color: '#ef4444' },
+];
+
 function CustomDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: TrendEntry }) {
   if (cx == null || cy == null || !payload) return null;
   return (
@@ -375,7 +384,10 @@ function TrendModal({ point, equipmentTag, onClose }: {
                 <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
                 <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} width={48}
-                  tickFormatter={v => v.toFixed(2)} />
+                  tickFormatter={v => v.toFixed(2)}
+                  // Stretch the axis past the Danger cutoff so the threshold
+                  // lines are always visible, even when readings sit low.
+                  domain={metric === 'crestFactor' ? [0, (dataMax: number) => Math.max(15, Math.ceil(dataMax * 1.1))] : undefined} />
                 <Tooltip
                   contentStyle={{ fontSize: 12, borderRadius: 10, border: '1px solid #e5e7eb', boxShadow: '0 4px 16px rgba(0,0,0,0.08)' }}
                   formatter={(v) => [Number(v).toFixed(3), cfg.label]}
@@ -387,6 +399,10 @@ function TrendModal({ point, equipmentTag, onClose }: {
                   }}
                 />
                 <ReferenceLine y={0} stroke="#e5e7eb" />
+                {metric === 'crestFactor' && CF_THRESHOLDS.map(t => (
+                  <ReferenceLine key={t.label} y={t.y} stroke={t.color} strokeDasharray="6 4" strokeWidth={1.2}
+                    label={{ value: `${t.label} ≥ ${t.y}`, position: 'insideRight', fontSize: 10, fill: t.color, dy: -7 }} />
+                ))}
                 <Line
                   type="monotone"
                   dataKey={metric}

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Search, Loader2, X, ClipboardPlus, Building2, ExternalLink, Download,
+  Search, Loader2, X, ClipboardPlus, Building2, ExternalLink, Download, Mail, BellRing,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
@@ -27,6 +27,7 @@ interface FindingRow {
   status: FindingStatus;
   workOrderId: string | null;
   woNumber: string | null;
+  notifiedAt: string | null;
   locationId: string | null;
   line: string;
   section: string;
@@ -49,6 +50,7 @@ interface RawFinding {
   creation_date: string;
   status: FindingStatus;
   work_order_id: string | null;
+  notified_at: string | null;
   location_id: string | null;
   measurement_points: {
     name: string;
@@ -103,6 +105,7 @@ function flatten(f: RawFinding, woNumber: string | null): FindingRow {
     status: f.status,
     workOrderId: f.work_order_id,
     woNumber,
+    notifiedAt: f.notified_at,
     locationId: f.location_id,
     line: sec?.lines?.name ?? '—',
     section: sec?.uas_name ?? '—',
@@ -116,7 +119,7 @@ function flatten(f: RawFinding, woNumber: string | null): FindingRow {
 // ── Page ────────────────────────────────────────────────────────────────────────
 
 export default function Findings() {
-  const { selectedCompanyId, selectedLocationId } = useScope();
+  const { selectedCompanyId, selectedLocationId, locations } = useScope();
   const { profile, user } = useAuth();
   const isAdmin = profile?.role === 'ime_admin';
 
@@ -131,6 +134,16 @@ export default function Findings() {
   const [filterCondition, setFilterCondition] = useState('');
   const [filterStatus, setFilterStatus]       = useState('');
 
+  // Notification selection (admin only)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showNotify, setShowNotify]   = useState(false);
+
+  const toggleSelected = (id: string) => setSelectedIds(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
   const openFinding = (r: FindingRow, wo = false) => { setStartWO(wo); setSelected(r); };
 
   const fetchData = useCallback(async () => {
@@ -143,7 +156,7 @@ export default function Findings() {
       .from('findings')
       .select(`
         id, condition, finding, recommendation, generated_tag, sap_no, wo_text,
-        bearings_info, comments, creation_date, status, work_order_id, location_id,
+        bearings_info, comments, creation_date, status, work_order_id, notified_at, location_id,
         measurement_points (
           name,
           components ( name, equipment ( id, tag, sections ( uas_name, lines ( name ) ) ) )
@@ -164,6 +177,7 @@ export default function Findings() {
     const flat = ((data ?? []) as unknown as RawFinding[])
       .map(f => flatten(f, f.work_order_id ? woMap.get(f.work_order_id) ?? null : null));
     setRows(flat);
+    setSelectedIds(new Set());
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
 
@@ -277,6 +291,16 @@ export default function Findings() {
         >
           <Download size={14} /> Export
         </button>
+        {isAdmin && (
+          <button
+            onClick={() => setShowNotify(true)}
+            disabled={selectedIds.size === 0}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Email the selected findings to IME admins, company admins, and plant managers"
+          >
+            <Mail size={14} /> Notify{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
+          </button>
+        )}
       </div>
 
       {/* Table */}
@@ -287,6 +311,17 @@ export default function Findings() {
           <table className="w-full border-collapse text-[13px] whitespace-nowrap">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50/60 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                {isAdmin && (
+                  <th className="pl-3 pr-1 py-3">
+                    <input
+                      type="checkbox"
+                      checked={visible.length > 0 && visible.every(r => selectedIds.has(r.id))}
+                      onChange={e => setSelectedIds(e.target.checked ? new Set(visible.map(r => r.id)) : new Set())}
+                      className="cursor-pointer accent-primary"
+                      title="Select all visible"
+                    />
+                  </th>
+                )}
                 <th className="px-3 py-3 text-left">#</th>
                 <th className="px-3 py-3 text-left">Area</th>
                 <th className="px-3 py-3 text-left">Functional Location</th>
@@ -303,10 +338,20 @@ export default function Findings() {
             </thead>
             <tbody>
               {visible.length === 0 ? (
-                <tr><td colSpan={12} className="text-center py-12 text-sm text-gray-400">No findings match your filters</td></tr>
+                <tr><td colSpan={isAdmin ? 13 : 12} className="text-center py-12 text-sm text-gray-400">No findings match your filters</td></tr>
               ) : visible.map((r, i) => (
                 <tr key={r.id} onClick={() => openFinding(r)}
                   className="border-b border-gray-50 hover:bg-blue-50/40 cursor-pointer transition-colors">
+                  {isAdmin && (
+                    <td className="pl-3 pr-1 py-2.5" onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleSelected(r.id)}
+                        className="cursor-pointer accent-primary"
+                      />
+                    </td>
+                  )}
                   <td className="px-3 py-2.5 text-gray-300 tabular-nums">{i + 1}</td>
                   <td className="px-3 py-2.5 text-gray-600">{r.line}</td>
                   <td className="px-3 py-2.5 text-gray-500 max-w-[160px] truncate">{r.section}</td>
@@ -325,6 +370,11 @@ export default function Findings() {
                   <td className="px-3 py-2.5 text-gray-400 text-xs">{fmtDate(r.creationDate)}</td>
                   <td className="px-3 py-2.5">
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[r.status]}`}>{STATUS_LABEL[r.status]}</span>
+                    {r.notifiedAt && (
+                      <span className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5" title={`Notified ${fmtDate(r.notifiedAt)}`}>
+                        <BellRing size={10} /> Notified {fmtDate(r.notifiedAt)}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     {isAdmin && r.status === 'open' && (
@@ -353,6 +403,17 @@ export default function Findings() {
           onClose={() => setSelected(null)}
           onViewWorkOrder={() => { setSelected(null); navigate('/work-orders'); }}
           onSaved={() => { setSelected(null); fetchData(); }}
+        />
+      )}
+
+      {showNotify && (
+        <NotifyModal
+          findings={rows.filter(r => selectedIds.has(r.id))}
+          companyId={selectedCompanyId}
+          locationId={selectedLocationId}
+          locations={locations as { id: string; name: string }[]}
+          onClose={() => setShowNotify(false)}
+          onSent={() => { setShowNotify(false); fetchData(); }}
         />
       )}
     </div>
@@ -463,6 +524,9 @@ function FindingModal({
       sap_no: woSap || null,
       due_date: woDue || null,
       created_by: userId,
+      // KPI: mean time from notification email → WO creation. Copied here so
+      // it survives the finding later being deleted by reconcile_findings().
+      finding_notified_at: finding.notifiedAt,
     }).select('id').single();
 
     if (error) {
@@ -634,6 +698,178 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div>
       <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">{label}</p>
       {children}
+    </div>
+  );
+}
+
+// ── Notify modal — email selected findings to chosen recipients ────────────────
+
+interface Recipient {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: 'ime_admin' | 'company_admin' | 'plant_manager';
+  location_id: string | null;
+}
+
+const RECIPIENT_GROUPS: { role: Recipient['role']; label: string }[] = [
+  { role: 'ime_admin',     label: 'IME Admins' },
+  { role: 'company_admin', label: 'Company Admins' },
+  { role: 'plant_manager', label: 'Plant Managers' },
+];
+
+function NotifyModal({ findings, companyId, locationId, locations, onClose, onSent }: {
+  findings: FindingRow[];
+  companyId: string;
+  locationId: string | null;
+  locations: { id: string; name: string }[];
+  onClose: () => void;
+  onSent: () => void;
+}) {
+  const [recipients, setRecipients]   = useState<Recipient[]>([]);
+  const [loadingRec, setLoadingRec]   = useState(true);
+  const [checked, setChecked]         = useState<Set<string>>(new Set());
+  const [note, setNote]               = useState('');
+  const [sending, setSending]         = useState(false);
+  const [error, setError]             = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      // Eligible recipients: every IME admin + this company's company admins
+      // and plant managers (scoped to the selected plant when one is set).
+      const { data } = await supabase
+        .from('profiles')
+        .select('id, email, full_name, role, location_id')
+        .or(`role.eq.ime_admin,and(company_id.eq.${companyId},role.in.(company_admin,plant_manager))`);
+      const all = ((data ?? []) as Recipient[]).filter(p =>
+        p.email && (p.role !== 'plant_manager' || !locationId || p.location_id === locationId)
+      );
+      setRecipients(all);
+      setLoadingRec(false);
+    })();
+  }, [companyId, locationId]);
+
+  const toggle = (id: string) => setChecked(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const toggleGroup = (ids: string[], on: boolean) => setChecked(prev => {
+    const next = new Set(prev);
+    ids.forEach(id => on ? next.add(id) : next.delete(id));
+    return next;
+  });
+
+  const locName = (id: string | null) => locations.find(l => l.id === id)?.name ?? '';
+
+  const send = async () => {
+    setError(null);
+    setSending(true);
+    const { data, error: fnError } = await supabase.functions.invoke('notify-findings', {
+      body: {
+        findingIds: findings.map(f => f.id),
+        recipientIds: Array.from(checked),
+        note: note.trim() || null,
+      },
+    });
+    const failed = fnError || (data as { error?: string })?.error;
+    if (failed) {
+      setError(typeof failed === 'string' ? failed : 'Failed to send notification. Please try again.');
+      setSending(false);
+      return;
+    }
+    setSending(false);
+    onSent();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <div>
+            <h2 className="text-base font-bold text-gray-900 flex items-center gap-2"><Mail size={16} className="text-primary" /> Notify findings</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{findings.length} finding{findings.length !== 1 ? 's' : ''} selected · email sent from the platform</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X size={16} /></button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-5">
+          {error && (
+            <div className="px-3 py-2.5 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
+          )}
+
+          {/* Selected findings summary */}
+          <div className="rounded-xl border border-gray-100 divide-y divide-gray-50 max-h-36 overflow-y-auto">
+            {findings.map(f => (
+              <div key={f.id} className="px-3 py-1.5 flex items-center gap-2 text-xs">
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${CONDITION_BADGE[f.condition]}`}>{f.condition}</span>
+                <span className="font-mono font-semibold text-gray-700">{f.equipment}</span>
+                <span className="text-gray-400 truncate">{f.point} · {f.line}</span>
+                {f.notifiedAt && <span className="ml-auto text-[10px] text-gray-300 shrink-0">notified {fmtDate(f.notifiedAt)}</span>}
+              </div>
+            ))}
+          </div>
+
+          {/* Recipients */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-2">Recipients <span className="text-red-400">*</span></p>
+            {loadingRec ? (
+              <div className="flex justify-center py-6"><Loader2 size={18} className="animate-spin text-gray-300" /></div>
+            ) : (
+              <div className="space-y-3">
+                {RECIPIENT_GROUPS.map(g => {
+                  const members = recipients.filter(r => r.role === g.role);
+                  if (members.length === 0) return null;
+                  const allOn = members.every(m => checked.has(m.id));
+                  return (
+                    <div key={g.role} className="rounded-xl border border-gray-100 overflow-hidden">
+                      <label className="flex items-center gap-2 px-3 py-2 bg-gray-50 cursor-pointer">
+                        <input type="checkbox" checked={allOn}
+                          onChange={e => toggleGroup(members.map(m => m.id), e.target.checked)}
+                          className="cursor-pointer accent-primary" />
+                        <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">{g.label}</span>
+                        <span className="text-[10px] text-gray-300">· {members.length}</span>
+                      </label>
+                      <div className="divide-y divide-gray-50">
+                        {members.map(m => (
+                          <label key={m.id} className="flex items-center gap-2.5 px-3 py-2 cursor-pointer hover:bg-blue-50/40">
+                            <input type="checkbox" checked={checked.has(m.id)} onChange={() => toggle(m.id)}
+                              className="cursor-pointer accent-primary" />
+                            <span className="text-sm text-gray-700">{m.full_name?.trim() || m.email}</span>
+                            <span className="text-xs text-gray-400 truncate">{m.email}</span>
+                            {m.role === 'plant_manager' && m.location_id && (
+                              <span className="ml-auto text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full shrink-0">{locName(m.location_id)}</span>
+                            )}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })}
+                {recipients.length === 0 && <p className="text-xs text-gray-400">No eligible recipients found.</p>}
+              </div>
+            )}
+          </div>
+
+          {/* Optional message */}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Message <span className="text-gray-300 font-normal normal-case">(optional)</span></p>
+            <textarea value={note} onChange={e => setNote(e.target.value)} rows={3}
+              placeholder="Add context for the recipients…"
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
+          <button onClick={onClose} className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-500 hover:bg-gray-100">Cancel</button>
+          <button onClick={send} disabled={checked.size === 0 || sending}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light disabled:opacity-50">
+            {sending ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+            Send to {checked.size} recipient{checked.size !== 1 ? 's' : ''}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

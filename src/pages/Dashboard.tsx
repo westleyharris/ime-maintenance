@@ -208,6 +208,14 @@ function EquipmentAlarmPanel({ level, rows, onSelect }: { level: 'Danger' | 'War
   );
 }
 
+// Compact duration: "3.2d" / "6.4h" / "45m"
+function fmtDuration(ms: number) {
+  const h = ms / 3_600_000;
+  if (h >= 24) return `${(h / 24).toFixed(1)}d`;
+  if (h >= 1)  return `${h.toFixed(1)}h`;
+  return `${Math.max(1, Math.round(ms / 60_000))}m`;
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -215,6 +223,7 @@ export default function Dashboard() {
 
   const [rows, setRows]               = useState<FlatAlarm[]>([]);
   const [equipList, setEquipList]     = useState<{ id: string; status: string; line: string }[]>([]);
+  const [notifyToWo, setNotifyToWo]   = useState<{ avgMs: number; count: number } | null>(null);
   const [loading, setLoading]         = useState(false);
   const [lastReading, setLastReading] = useState<string | null>(null);
   const [nextVisit, setNextVisit]     = useState<string | null>(null);
@@ -317,6 +326,24 @@ export default function Dashboard() {
         line: e.sections?.lines?.name ?? '—',
       })));
     }
+
+    // KPI: mean time from findings-notification email → work order creation.
+    // finding_notified_at is copied onto the WO at creation, so this survives
+    // the finding itself being reconciled away later.
+    let woq = supabase
+      .from('work_orders')
+      .select('created_at, finding_notified_at')
+      .eq('company_id', selectedCompanyId)
+      .not('finding_notified_at', 'is', null);
+    if (selectedLocationId) woq = woq.eq('location_id', selectedLocationId);
+    const { data: woRows } = await woq;
+    const deltas = (woRows ?? [])
+      .map(w => new Date(w.created_at).getTime() - new Date(w.finding_notified_at as string).getTime())
+      .filter(d => d >= 0);
+    setNotifyToWo(deltas.length
+      ? { avgMs: deltas.reduce((a, b) => a + b, 0) / deltas.length, count: deltas.length }
+      : null);
+
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
 
@@ -607,6 +634,23 @@ export default function Dashboard() {
                       overdue — <span className="font-bold text-gray-800">{nonCompliantCount}</span>
                     </span>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* Divider */}
+            <div className="border-t border-gray-200" />
+
+            {/* Notification → Work Order response time */}
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700">Notification Response</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Mean time from findings email to work order</p>
+              {notifyToWo == null ? (
+                <div className="flex items-center justify-center h-16 text-gray-300 text-sm">No notified findings with work orders yet</div>
+              ) : (
+                <div className="mt-3 flex items-baseline gap-2">
+                  <span className="text-4xl font-black leading-none text-gray-900">{fmtDuration(notifyToWo.avgMs)}</span>
+                  <span className="text-xs text-gray-400">avg over {notifyToWo.count} work order{notifyToWo.count !== 1 ? 's' : ''}</span>
                 </div>
               )}
             </div>

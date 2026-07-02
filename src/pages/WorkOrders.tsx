@@ -18,6 +18,7 @@ interface WORow {
   assignee: string | null;
   sapNo: string | null;
   cmmsWoNo: string | null;
+  closeNote: string | null;
   dueDate: string | null;
   createdAt: string;
   findingId: string | null;
@@ -37,6 +38,7 @@ interface RawWO {
   assignee: string | null;
   sap_no: string | null;
   cmms_wo_no: string | null;
+  close_note: string | null;
   due_date: string | null;
   created_at: string;
   finding_id: string | null;
@@ -60,6 +62,17 @@ const STATUS_BADGE: Record<WOStatus, string> = {
 const STATUS_LABEL: Record<WOStatus, string> = {
   open: 'Open', in_progress: 'In Progress', closed: 'Closed', cancelled: 'Cancelled',
 };
+
+// Preset closing reasons — picked from a dropdown when a WO is closed
+const CLOSE_REASONS = [
+  'Nothing was found',
+  'Was sent to repair',
+  'Repaired in place',
+  'Component replaced',
+  'Adjusted / lubricated',
+  'Monitoring — no further action',
+  'Other',
+];
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
@@ -85,7 +98,7 @@ export default function WorkOrders() {
     let q = supabase
       .from('work_orders')
       .select(`
-        id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, due_date, created_at, finding_id,
+        id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, close_note, due_date, created_at, finding_id,
         equipment ( tag, sections ( lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId)
@@ -107,7 +120,7 @@ export default function WorkOrders() {
       return {
         id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
         priority: w.priority, status: w.status, assignee: w.assignee, sapNo: w.sap_no,
-        cmmsWoNo: w.cmms_wo_no, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
+        cmmsWoNo: w.cmms_wo_no, closeNote: w.close_note, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
         equipment: w.equipment?.tag ?? '—',
         line: w.equipment?.sections?.lines?.name ?? '—',
         findingCondition: f?.condition ?? null,
@@ -120,9 +133,27 @@ export default function WorkOrders() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // Closing requires a note — intercept and open the close modal instead
+  const [closingWO, setClosingWO] = useState<WORow | null>(null);
+
   const updateStatus = async (id: string, status: WOStatus) => {
+    if (status === 'closed') {
+      const wo = rows.find(r => r.id === id);
+      if (wo) setClosingWO(wo);
+      return;
+    }
     await supabase.from('work_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
     setRows(rs => rs.map(r => r.id === id ? { ...r, status } : r));
+  };
+
+  const confirmClose = async (id: string, note: string) => {
+    await supabase.from('work_orders').update({
+      status: 'closed',
+      close_note: note,
+      updated_at: new Date().toISOString(),
+    }).eq('id', id);
+    setRows(rs => rs.map(r => r.id === id ? { ...r, status: 'closed' as WOStatus, closeNote: note } : r));
+    setClosingWO(null);
   };
 
   // Manually-entered CMMS work order number — saved on blur / Enter
@@ -164,6 +195,7 @@ export default function WorkOrders() {
       'Status': STATUS_LABEL[w.status],
       'Assignee': w.assignee ?? '',
       'SAP No': w.sapNo ?? '',
+      'Close Note': w.closeNote ?? '',
       'Due': fmtDate(w.dueDate),
       'Created': fmtDate(w.createdAt),
     })),
@@ -291,6 +323,9 @@ export default function WorkOrders() {
                     ) : (
                       <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[w.status]}`}>{STATUS_LABEL[w.status]}</span>
                     )}
+                    {w.status === 'closed' && w.closeNote && (
+                      <span className="block text-[10px] text-gray-400 mt-0.5 max-w-[160px] truncate" title={w.closeNote}>{w.closeNote}</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-gray-500">{w.assignee ?? '—'}</td>
                   <td className="px-3 py-2.5 text-gray-400 text-xs">{fmtDate(w.dueDate)}</td>
@@ -307,6 +342,74 @@ export default function WorkOrders() {
             </tbody>
           </table>
         )}
+      </div>
+
+      {closingWO && (
+        <CloseWOModal
+          wo={closingWO}
+          onCancel={() => setClosingWO(null)}
+          onConfirm={note => confirmClose(closingWO.id, note)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Close modal — a closing note is required ──────────────────────────────────
+
+function CloseWOModal({ wo, onCancel, onConfirm }: {
+  wo: WORow;
+  onCancel: () => void;
+  onConfirm: (note: string) => void;
+}) {
+  const [reason, setReason]   = useState('');
+  const [details, setDetails] = useState('');
+  const [saving, setSaving]   = useState(false);
+
+  // "Other" needs free text; presets can optionally add detail
+  const valid = reason !== '' && (reason !== 'Other' || details.trim() !== '');
+
+  const submit = async () => {
+    if (!valid) return;
+    setSaving(true);
+    const note = reason === 'Other'
+      ? details.trim()
+      : details.trim() ? `${reason} — ${details.trim()}` : reason;
+    await onConfirm(note);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h2 className="text-base font-bold text-gray-900">Close {wo.woNumber}</h2>
+          <p className="text-xs text-gray-400 mt-0.5">{wo.equipment} · {wo.title ?? 'Work order'}</p>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Closing reason <span className="text-red-400">*</span></p>
+            <select value={reason} onChange={e => setReason(e.target.value)}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20">
+              <option value="">Select a reason…</option>
+              {CLOSE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+              Details {reason === 'Other' ? <span className="text-red-400">*</span> : <span className="text-gray-300 font-normal normal-case">(optional)</span>}
+            </p>
+            <textarea value={details} onChange={e => setDetails(e.target.value)} rows={3}
+              placeholder={reason === 'Other' ? 'Describe what was done…' : 'Anything worth noting…'}
+              className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm outline-none focus:ring-2 focus:ring-primary/20" />
+          </div>
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100">
+          <button onClick={onCancel} className="px-3 py-2 rounded-lg text-sm font-semibold text-gray-500 hover:bg-gray-100">Cancel</button>
+          <button onClick={submit} disabled={!valid || saving}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light disabled:opacity-50">
+            {saving ? <Loader2 size={14} className="animate-spin" /> : null} Close Work Order
+          </button>
+        </div>
       </div>
     </div>
   );

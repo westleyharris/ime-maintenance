@@ -651,11 +651,41 @@ function WorkOrdersTab() {
 
 // ── KPIs tab ──────────────────────────────────────────────────────────────────
 
-function KPIsTab({ components, status, lastReplacedAt }: {
+// Compact duration: "3.2d" / "6.4h" / "45m"
+function fmtDuration(ms: number) {
+  const h = ms / 3_600_000;
+  if (h >= 24) return `${(h / 24).toFixed(1)}d`;
+  if (h >= 1)  return `${h.toFixed(1)}h`;
+  return `${Math.max(1, Math.round(ms / 60_000))}m`;
+}
+
+function KPIsTab({ components, status, lastReplacedAt, equipmentId }: {
   components: ComponentData[];
   status: string | null;
   lastReplacedAt: string | null;
+  equipmentId: string;
 }) {
+  // Work-order derived KPIs: open backlog + mean notification→WO time
+  const [woKpis, setWoKpis] = useState<{ backlog: number; notifyAvgMs: number | null; notifyCount: number } | null>(null);
+  useEffect(() => {
+    supabase
+      .from('work_orders')
+      .select('status, created_at, finding_notified_at')
+      .eq('equipment_id', equipmentId)
+      .then(({ data }) => {
+        const wos = data ?? [];
+        const deltas = wos
+          .filter(w => w.finding_notified_at)
+          .map(w => new Date(w.created_at).getTime() - new Date(w.finding_notified_at as string).getTime())
+          .filter(d => d >= 0);
+        setWoKpis({
+          backlog: wos.filter(w => w.status === 'open' || w.status === 'in_progress').length,
+          notifyAvgMs: deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : null,
+          notifyCount: deltas.length,
+        });
+      });
+  }, [equipmentId]);
+
   const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
   // Latest reading per point (current per-point status, not the full history)
   const latestMeas = components.flatMap(c => (c.measurement_points ?? []).map(mp => {
@@ -669,10 +699,14 @@ function KPIsTab({ components, status, lastReplacedAt }: {
   const total = latestMeas.length;
 
   const kpis = [
-    { label: 'MTBF',            value: '—',   sub: 'hours',    note: 'Requires work order history' },
-    { label: 'MTTR',            value: '—',   sub: 'hours',    note: 'Requires work order history' },
-    { label: 'Availability',    value: '—',   sub: '%',        note: 'Requires work order history' },
-    { label: 'WO Backlog',      value: '—',   sub: 'open',     note: 'Requires work order data'    },
+    { label: 'MTBF',            value: '—' as string | number,   sub: 'hours',    note: 'Requires work order history' },
+    { label: 'MTTR',            value: '—' as string | number,   sub: 'hours',    note: 'Requires work order history' },
+    { label: 'Availability',    value: '—' as string | number,   sub: '%',        note: 'Requires work order history' },
+    { label: 'WO Backlog',      value: woKpis ? woKpis.backlog : '—', sub: 'open', note: '' },
+    { label: 'Notify → WO',
+      value: woKpis?.notifyAvgMs != null ? fmtDuration(woKpis.notifyAvgMs) : '—',
+      sub: woKpis?.notifyCount ? `avg of ${woKpis.notifyCount} WO${woKpis.notifyCount !== 1 ? 's' : ''}` : 'mean response',
+      note: woKpis?.notifyAvgMs == null ? 'Requires a notified finding with a work order' : '' },
     { label: 'Total Readings',  value: total, sub: 'points',   note: '' },
     { label: 'Critical Points', value: dangerCount + warningCount, sub: 'in alarm', note: '' },
   ];
@@ -1567,7 +1601,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
           )}
           {activeTab === 'workorders'   && <WorkOrdersTab />}
           {activeTab === 'kpis' && (
-            <KPIsTab components={components} status={info?.status ?? null} lastReplacedAt={info?.last_replaced_at ?? null} />
+            <KPIsTab components={components} status={info?.status ?? null} lastReplacedAt={info?.last_replaced_at ?? null} equipmentId={equipmentId} />
           )}
           {activeTab === 'qr'       && <QRTab tag={equipmentTag} displayName={info?.display_name ?? null} />}
         </>
