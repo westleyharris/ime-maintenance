@@ -60,7 +60,7 @@ const STATUS_BADGE: Record<WOStatus, string> = {
 };
 
 const STATUS_LABEL: Record<WOStatus, string> = {
-  open: 'Open', in_progress: 'In Progress', closed: 'Closed', cancelled: 'Cancelled',
+  open: 'To Be Scheduled', in_progress: 'In Progress', closed: 'Closed', cancelled: 'Cancelled',
 };
 
 // Preset closing reasons — picked from a dropdown when a WO is closed
@@ -234,7 +234,7 @@ export default function WorkOrders() {
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
           className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
           <option value="">All statuses</option>
-          <option value="open">Open</option><option value="in_progress">In Progress</option>
+          <option value="open">To Be Scheduled</option><option value="in_progress">In Progress</option>
           <option value="closed">Closed</option><option value="cancelled">Cancelled</option>
         </select>
         <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
@@ -317,7 +317,7 @@ export default function WorkOrders() {
                     {isAdmin ? (
                       <select value={w.status} onChange={e => updateStatus(w.id, e.target.value as WOStatus)}
                         className={`px-2 py-0.5 rounded-full text-[11px] font-bold border-0 cursor-pointer ${STATUS_BADGE[w.status]}`}>
-                        <option value="open">Open</option><option value="in_progress">In Progress</option>
+                        <option value="open">To Be Scheduled</option><option value="in_progress">In Progress</option>
                         <option value="closed">Closed</option><option value="cancelled">Cancelled</option>
                       </select>
                     ) : (

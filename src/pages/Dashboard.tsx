@@ -368,12 +368,16 @@ export default function Dashboard() {
     Normal:  activeRows.filter(r => r.alarmLevel === 'Normal'),
   };
 
-  // Equipment-level grouping (worst alarm per equipment)
+  // Equipment-level grouping (worst alarm per equipment). Keyed by equipment
+  // id, NOT tag — the same tag can exist on several sections/lines (e.g. the
+  // nine "Motor N" tags that appear on two L1 Conveyors sections at Alsip),
+  // and merging them undercounts equipment vs. route compliance.
   const equipmentMap = new Map<string, FlatEquipment>();
   for (const r of activeRows) {
-    const existing = equipmentMap.get(r.equipmentTag);
+    const key = r.equipmentId || r.equipmentTag;
+    const existing = equipmentMap.get(key);
     if (!existing) {
-      equipmentMap.set(r.equipmentTag, {
+      equipmentMap.set(key, {
         line: r.line,
         system: r.system,
         equipmentId: r.equipmentId,
