@@ -149,17 +149,24 @@ export default function Admin() {
     if (editRole === 'plant_manager' && !editLocationId) { setUserError('Location is required for Plant Manager.'); return; }
     setSavingUser(true); setUserError('');
 
-    const updates: Record<string, unknown> = {
+    const updates = {
       role: editRole,
       company_id: editRole === 'ime_admin' ? null : editCompanyId,
       location_id: editRole === 'plant_manager' ? editLocationId : null,
     };
 
-    const { error } = await supabase.from('profiles').update(updates).eq('id', editingUserId);
-    if (error) { setUserError(error.message); setSavingUser(false); return; }
-
-    // Sync JWT app_metadata so scope changes take effect on next login
-    try { await supabase.rpc('sync_user_metadata', { user_id: editingUserId }); } catch { /* best-effort */ }
+    // Profiles are (intentionally) not client-writable for other users, so the
+    // update goes through the update-user edge function (service role, gated on
+    // the caller being an ime_admin). It also syncs the target user's JWT scope.
+    const { data, error } = await supabase.functions.invoke('update-user', {
+      body: { user_id: editingUserId, ...updates },
+    });
+    const failed = error || (data as { error?: string })?.error;
+    if (failed) {
+      setUserError(typeof failed === 'string' ? failed : 'Could not update user. Please try again.');
+      setSavingUser(false);
+      return;
+    }
 
     setUsers(prev => prev.map(u => u.id === editingUserId ? { ...u, ...updates } as UserRow : u));
     setEditingUserId(null);

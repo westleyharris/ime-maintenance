@@ -43,7 +43,13 @@
       "Bash(curl -s -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' 'https://gszfyelaezdftlwtzrjw.supabase.co/rest/v1/measurements?location_id=eq.baf11b47-f153-44a3-959a-a817f8e06433&uas_mes_id=in.\\(1498,477,504\\)&waveform_path=is.null&select=uas_mes_id')",
       "Bash(curl -s -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' 'https://gszfyelaezdftlwtzrjw.supabase.co/rest/v1/measurements?location_id=eq.baf11b47-f153-44a3-959a-a817f8e06433&uas_mes_id=in.\\(1498,477,504\\)&select=uas_mes_id')",
       "Bash(grep -n '^#\\\\{1,3\\\\} ' ARCHITECTURE.md)",
-      "Bash(grep -n '^## 1[1-5]\\\\|^### Why `mpMap`\\\\|^## Database Row' ARCHITECTURE.md)"
+      "Bash(grep -n '^## 1[1-5]\\\\|^### Why `mpMap`\\\\|^## Database Row' ARCHITECTURE.md)",
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__get_advisors",
+      "Bash(curl -s \"https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/settings\" -H \"apikey: sb_publishable_B1h3pMZLeNQxw6YsDt76Yg_yCrSfJUP\")",
+      "Bash(python3 -m json.tool)",
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__list_edge_functions",
+      "Bash(curl -s -X DELETE https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/admin/users/70f408e0-7dff-4592-9668-3104d53b7ad3 -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10')",
+      "Bash(git check-ignore *)"
     ]
   }
 }
