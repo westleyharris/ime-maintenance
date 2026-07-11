@@ -33,8 +33,6 @@ interface FindingRow {
   section: string;
   equipment: string;
   equipmentId: string | null;
-  component: string;
-  point: string;
 }
 
 interface RawFinding {
@@ -52,16 +50,11 @@ interface RawFinding {
   work_order_id: string | null;
   notified_at: string | null;
   location_id: string | null;
-  measurement_points: {
-    name: string;
-    components: {
-      name: string;
-      equipment: {
-        id: string;
-        tag: string;
-        sections: { uas_name: string; lines: { name: string } } | null;
-      } | null;
-    } | null;
+  equipment_id: string | null;
+  equipment: {
+    id: string;
+    tag: string;
+    sections: { uas_name: string; lines: { name: string } | null } | null;
   } | null;
 }
 
@@ -89,7 +82,7 @@ function fmtDate(iso: string | null) {
 }
 
 function flatten(f: RawFinding, woNumber: string | null): FindingRow {
-  const eq  = f.measurement_points?.components?.equipment;
+  const eq  = f.equipment;
   const sec = eq?.sections;
   return {
     id: f.id,
@@ -110,9 +103,7 @@ function flatten(f: RawFinding, woNumber: string | null): FindingRow {
     line: sec?.lines?.name ?? '—',
     section: sec?.uas_name ?? '—',
     equipment: eq?.tag ?? '—',
-    equipmentId: eq?.id ?? null,
-    component: f.measurement_points?.components?.name ?? '—',
-    point: f.measurement_points?.name ?? '—',
+    equipmentId: eq?.id ?? f.equipment_id ?? null,
   };
 }
 
@@ -122,6 +113,9 @@ export default function Findings() {
   const { selectedCompanyId, selectedLocationId, locations } = useScope();
   const { profile, user } = useAuth();
   const isAdmin = profile?.role === 'ime_admin';
+  // company_admin and plant_manager can also create/manage work orders (scope is
+  // enforced server-side by RLS); only ime_admin edits recommendations & notifies.
+  const canCreateWO = isAdmin || profile?.role === 'company_admin' || profile?.role === 'plant_manager';
 
   const navigate = useNavigate();
   const [rows, setRows]       = useState<FindingRow[]>([]);
@@ -156,11 +150,8 @@ export default function Findings() {
       .from('findings')
       .select(`
         id, condition, finding, recommendation, generated_tag, sap_no, wo_text,
-        bearings_info, comments, creation_date, status, work_order_id, notified_at, location_id,
-        measurement_points (
-          name,
-          components ( name, equipment ( id, tag, sections ( uas_name, lines ( name ) ) ) )
-        )
+        bearings_info, comments, creation_date, status, work_order_id, notified_at, location_id, equipment_id,
+        equipment ( id, tag, sections ( uas_name, lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId);
     if (selectedLocationId) q = q.eq('location_id', selectedLocationId);
@@ -192,7 +183,7 @@ export default function Findings() {
       if (filterCondition && r.condition !== filterCondition) return false;
       if (search) {
         const q = search.toLowerCase();
-        if (!(`${r.equipment} ${r.component} ${r.point} ${r.generatedTag ?? ''} ${r.line} ${r.section}`
+        if (!(`${r.equipment} ${r.generatedTag ?? ''} ${r.line} ${r.section}`
           .toLowerCase().includes(q))) return false;
       }
       return true;
@@ -212,8 +203,6 @@ export default function Findings() {
       'Area': r.line,
       'Functional Location': r.section,
       'Machine': r.equipment,
-      'Component': r.component,
-      'Point': r.point,
       'Condition': r.condition,
       'Finding': r.finding ?? '',
       'Recommendation': r.recommendation ?? '',
@@ -259,7 +248,7 @@ export default function Findings() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text" value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search machine, point, tag…"
+            placeholder="Search asset, tag, area…"
             className="w-full pl-9 pr-3 py-2 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20"
           />
         </div>
@@ -326,7 +315,6 @@ export default function Findings() {
                 <th className="px-3 py-3 text-left">Area</th>
                 <th className="px-3 py-3 text-left">Functional Location</th>
                 <th className="px-3 py-3 text-left">Machine</th>
-                <th className="px-3 py-3 text-left">Point</th>
                 <th className="px-3 py-3 text-left">Condition</th>
                 <th className="px-3 py-3 text-left">Recommendation</th>
                 <th className="px-3 py-3 text-left">Generated TAG</th>
@@ -338,7 +326,7 @@ export default function Findings() {
             </thead>
             <tbody>
               {visible.length === 0 ? (
-                <tr><td colSpan={isAdmin ? 13 : 12} className="text-center py-12 text-sm text-gray-400">No findings match your filters</td></tr>
+                <tr><td colSpan={isAdmin ? 12 : 11} className="text-center py-12 text-sm text-gray-400">No findings match your filters</td></tr>
               ) : visible.map((r, i) => (
                 <tr key={r.id} onClick={() => openFinding(r)}
                   className="border-b border-gray-50 hover:bg-blue-50/40 cursor-pointer transition-colors">
@@ -356,7 +344,6 @@ export default function Findings() {
                   <td className="px-3 py-2.5 text-gray-600">{r.line}</td>
                   <td className="px-3 py-2.5 text-gray-500 max-w-[160px] truncate">{r.section}</td>
                   <td className="px-3 py-2.5 font-mono font-semibold text-gray-800">{r.equipment}</td>
-                  <td className="px-3 py-2.5 text-gray-500">{r.point}</td>
                   <td className="px-3 py-2.5">
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${CONDITION_BADGE[r.condition]}`}>{r.condition}</span>
                   </td>
@@ -377,10 +364,11 @@ export default function Findings() {
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
-                    {isAdmin && r.status === 'open' && (
+                    {canCreateWO && r.status === 'open' && r.recommendation?.trim() && (
                       <button
                         onClick={e => { e.stopPropagation(); openFinding(r, true); }}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary text-white text-[11px] font-semibold hover:bg-primary-light"
+                        title="Create work order"
                       >
                         <ClipboardPlus size={12} /> WO
                       </button>
@@ -397,6 +385,7 @@ export default function Findings() {
         <FindingModal
           finding={selected}
           isAdmin={isAdmin}
+          canCreateWO={canCreateWO}
           defaultShowWO={startWO}
           userId={user?.id ?? null}
           companyId={selectedCompanyId}
@@ -423,10 +412,11 @@ export default function Findings() {
 // ── Detail / edit modal ─────────────────────────────────────────────────────────
 
 function FindingModal({
-  finding, isAdmin, defaultShowWO, userId, companyId, onClose, onSaved, onViewWorkOrder,
+  finding, isAdmin, canCreateWO, defaultShowWO, userId, companyId, onClose, onSaved, onViewWorkOrder,
 }: {
   finding: FindingRow;
   isAdmin: boolean;
+  canCreateWO: boolean;
   defaultShowWO: boolean;
   userId: string | null;
   companyId: string;
@@ -444,9 +434,9 @@ function FindingModal({
   const [woError, setWoError] = useState<string | null>(null);
 
   // Work-order form
-  const [woTitle, setWoTitle]   = useState(finding.woText ?? `PdM Finding - ${finding.equipment} ${finding.point}`);
+  const [woTitle, setWoTitle]   = useState(finding.woText ?? `PdM Finding - ${finding.equipment}`);
   const [woDesc, setWoDesc]     = useState(
-    `${finding.condition} on ${finding.line} / ${finding.section} / ${finding.equipment} / ${finding.point}.` +
+    `${finding.condition} on ${finding.line} / ${finding.section} / ${finding.equipment}.` +
     (finding.finding ? `\nFinding: ${finding.finding}` : '')
   );
   const [woPriority, setWoPriority] = useState(finding.condition === 'Danger' ? 'high' : 'medium');
@@ -467,8 +457,6 @@ function FindingModal({
       metadata: {
         finding_id: finding.id,
         condition: finding.condition,
-        component: finding.component,
-        point: finding.point,
       },
     });
   };
@@ -490,9 +478,13 @@ function FindingModal({
 
   const createWorkOrder = async () => {
     setWoError(null);
-    // A work order needs the expert recommendation filled out first
+    // A recommendation must exist before ANY work order can be created. Only
+    // ime_admins can write it, so a manager simply can't create the WO until an
+    // analyst has added the recommendation.
     if (!recommendation.trim()) {
-      setWoError('Fill out the expert recommendation before creating a work order (use Back to edit it).');
+      setWoError(isAdmin
+        ? 'Fill out the expert recommendation before creating a work order (use Back to edit it).'
+        : 'This finding needs an IME analyst’s recommendation before a work order can be created.');
       return;
     }
     setSaving(true);
@@ -544,10 +536,11 @@ function FindingModal({
         work_order_id: wo.id,
         wo_text: woTitle,
         sap_no: woSap || null,
-        recommendation: recommendation || null,
+        // only ime_admins own the recommendation; don't let a manager blank it
+        ...(isAdmin ? { recommendation: recommendation || null } : {}),
         updated_at: new Date().toISOString(),
       }).eq('id', finding.id);
-      await logRecommendationNote();
+      if (isAdmin) await logRecommendationNote();
     }
     setSaving(false);
     onSaved();
@@ -565,8 +558,8 @@ function FindingModal({
               <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[finding.status]}`}>{STATUS_LABEL[finding.status]}</span>
               {finding.woNumber && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-primary/10 text-primary font-mono">{finding.woNumber}</span>}
             </div>
-            <h2 className="text-base font-bold text-gray-900 mt-1.5 font-mono">{finding.equipment} · {finding.point}</h2>
-            <p className="text-xs text-gray-400 mt-0.5">{finding.line} / {finding.section} / {finding.component}</p>
+            <h2 className="text-base font-bold text-gray-900 mt-1.5 font-mono">{finding.equipment}</h2>
+            <p className="text-xs text-gray-400 mt-0.5">{finding.line} / {finding.section}</p>
           </div>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X size={16} /></button>
         </div>
@@ -642,7 +635,7 @@ function FindingModal({
         </div>
 
         {/* Footer */}
-        {isAdmin && (
+        {canCreateWO && (
           <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-gray-100 shrink-0">
             {showWO ? (
               <>
@@ -654,10 +647,12 @@ function FindingModal({
               </>
             ) : (
               <>
-                <button onClick={saveFields} disabled={saving}
-                  className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">
-                  {saving ? 'Saving…' : 'Save'}
-                </button>
+                {isAdmin && (
+                  <button onClick={saveFields} disabled={saving}
+                    className="px-4 py-2 rounded-lg border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                )}
                 {finding.workOrderId ? (
                   <button onClick={onViewWorkOrder}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-primary/30 text-primary text-sm font-semibold hover:bg-primary/5">
@@ -667,7 +662,9 @@ function FindingModal({
                   <button
                     onClick={() => {
                       if (!recommendation.trim()) {
-                        setWoError('Fill out the expert recommendation before creating a work order.');
+                        setWoError(isAdmin
+                          ? 'Fill out the expert recommendation before creating a work order.'
+                          : 'This finding needs an IME analyst’s recommendation before a work order can be created.');
                         return;
                       }
                       setWoError(null);
@@ -679,13 +676,6 @@ function FindingModal({
                 )}
               </>
             )}
-          </div>
-        )}
-        {!isAdmin && finding.workOrderId && (
-          <div className="flex items-center justify-end px-6 py-3 border-t border-gray-100">
-            <button onClick={onViewWorkOrder} className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary hover:underline">
-              <ExternalLink size={13} /> View {finding.woNumber}
-            </button>
           </div>
         )}
       </div>
@@ -805,7 +795,7 @@ function NotifyModal({ findings, companyId, locationId, locations, onClose, onSe
               <div key={f.id} className="px-3 py-1.5 flex items-center gap-2 text-xs">
                 <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold shrink-0 ${CONDITION_BADGE[f.condition]}`}>{f.condition}</span>
                 <span className="font-mono font-semibold text-gray-700">{f.equipment}</span>
-                <span className="text-gray-400 truncate">{f.point} · {f.line}</span>
+                <span className="text-gray-400 truncate">{f.line} · {f.section}</span>
                 {f.notifiedAt && <span className="ml-auto text-[10px] text-gray-300 shrink-0">notified {fmtDate(f.notifiedAt)}</span>}
               </div>
             ))}

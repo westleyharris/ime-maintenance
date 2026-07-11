@@ -6,6 +6,7 @@ import {
   MapPin, CheckCircle, AlertTriangle, Gauge,
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { fetchAllRows } from '../lib/fetchAll';
 import { useScope } from '../context/ScopeContext';
 import { importUASHierarchy, type HierarchyResult } from '../utils/uasImporter';
 import type { AssetNode } from '../data/mockData';
@@ -40,6 +41,26 @@ const typeBadgeColors: Record<string, string> = {
   point: 'bg-teal-50 text-teal-700 border-teal-200',
 };
 
+// Subtle status LED: worst alarm across a node's points, rolled up. Danger and
+// Warning get a soft ring so they catch the eye without shouting; Normal is a
+// small muted green dot; a node with no readings shows a blank spacer.
+const ALARM_DOT: Record<string, string> = {
+  Danger:  'bg-red-500 ring-2 ring-red-200',
+  Warning: 'bg-orange-500 ring-2 ring-orange-100',
+  Alert:   'bg-blue-400 ring-2 ring-blue-100',
+  Normal:  'bg-emerald-400',
+};
+
+function AlarmDot({ level }: { level: AssetNode['alarm'] }) {
+  if (!level) return <span className="w-2 mr-2 shrink-0" aria-hidden />;
+  return (
+    <span
+      className={`w-2 h-2 rounded-full mr-2 shrink-0 ${ALARM_DOT[level] ?? ALARM_DOT.Normal}`}
+      title={`${level}`}
+    />
+  );
+}
+
 // ── Tree node component ───────────────────────────────────────────────────────
 
 function AssetTreeNode({
@@ -73,6 +94,7 @@ function AssetTreeNode({
         ) : (
           <span className="w-5 mr-1" />
         )}
+        <AlarmDot level={node.alarm} />
         <Icon size={16} className={`mr-2 shrink-0 ${typeColors[node.type]}`} />
         <span className={`text-sm font-medium flex-1 truncate ${isEquipment ? 'text-primary group-hover:underline' : 'text-gray-800'}`}>
           {node.name}
@@ -156,6 +178,25 @@ function buildTree(
   };
 }
 
+const ALARM_RANK: Record<string, number> = { Normal: 0, Alert: 1, Warning: 2, Danger: 3 };
+const RANK_ALARM = ['Normal', 'Alert', 'Warning', 'Danger'] as const;
+
+// Annotate every node with the worst current alarm among its measurement points,
+// rolling up leaf → root so a collapsed branch still signals what's inside.
+function annotateAlarms(node: AssetNode, pointAlarm: Map<string, string>): AssetNode['alarm'] {
+  if (node.type === 'point') {
+    node.alarm = (pointAlarm.get(node.id) as AssetNode['alarm']) ?? 'Normal';
+    return node.alarm;
+  }
+  let worst = -1;
+  for (const child of node.children ?? []) {
+    const a = annotateAlarms(child, pointAlarm);
+    if (a && ALARM_RANK[a] > worst) worst = ALARM_RANK[a];
+  }
+  node.alarm = worst >= 0 ? RANK_ALARM[worst] : null;
+  return node.alarm;
+}
+
 function countNodes(node: AssetNode): Record<string, number> {
   const counts: Record<string, number> = { site: 0, plant: 0, system: 0, equipment: 0, component: 0, point: 0 };
   function walk(n: AssetNode) {
@@ -206,7 +247,25 @@ export default function Assets() {
       .order('name');
 
     if (!error && data && data.length > 0 && selectedLocation) {
-      setTree(buildTree(selectedLocationId, selectedLocation.name, selectedCompanyId, data as DBLine[]));
+      const built = buildTree(selectedLocationId, selectedLocation.name, selectedCompanyId, data as DBLine[]);
+
+      // Latest alarm level per measurement point for this location, then roll up.
+      const { rows: measRows } = await fetchAllRows<{ measurement_point_id: string; alarm_level: string | null; measured_at: string | null }>(
+        (from, to) => supabase
+          .from('measurements')
+          .select('measurement_point_id, alarm_level, measured_at')
+          .eq('location_id', selectedLocationId)
+          .order('measured_at', { ascending: false })
+          .range(from, to) as unknown as PromiseLike<{ data: { measurement_point_id: string; alarm_level: string | null; measured_at: string | null }[] | null; error: unknown }>,
+      );
+      const pointAlarm = new Map<string, string>();
+      for (const m of measRows) {
+        if (m.measurement_point_id && !pointAlarm.has(m.measurement_point_id)) {
+          pointAlarm.set(m.measurement_point_id, m.alarm_level ?? 'Normal');
+        }
+      }
+      annotateAlarms(built, pointAlarm);
+      setTree(built);
     } else {
       setTree(null);
     }
@@ -357,6 +416,14 @@ export default function Assets() {
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
               <Gauge size={14} className="text-teal-500" />
               {t('assets.point', { defaultValue: 'Point' })} <span className="font-semibold text-gray-900 ml-1">{counts.point}</span>
+            </div>
+            {/* Alarm-dot legend — the dot before each asset shows its worst reading */}
+            <div className="ml-auto flex items-center gap-3 text-[11px] text-gray-400">
+              {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
+                <span key={l} className="flex items-center gap-1">
+                  <span className={`w-2 h-2 rounded-full ${ALARM_DOT[l]}`} />{l}
+                </span>
+              ))}
             </div>
           </div>
         )}

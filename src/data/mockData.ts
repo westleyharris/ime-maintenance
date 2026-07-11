@@ -22,6 +22,8 @@ export interface AssetNode {
   companyId: string;
   locationId?: string;
   children?: AssetNode[];
+  // worst current alarm across this node's measurement points (rolled up)
+  alarm?: 'Danger' | 'Warning' | 'Alert' | 'Normal' | null;
 }
 
 export interface WorkOrder {

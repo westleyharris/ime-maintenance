@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Trash2, Building2, ClipboardList, Download } from 'lucide-react';
+import { Loader2, Trash2, Building2, ClipboardList, Download, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
 import { useAuth } from '../context/AuthContext';
@@ -25,7 +25,6 @@ interface WORow {
   equipment: string;
   line: string;
   findingCondition: string | null;
-  findingPoint: string | null;
 }
 
 interface RawWO {
@@ -84,9 +83,12 @@ export default function WorkOrders() {
   const { selectedCompanyId, selectedLocationId } = useScope();
   const { profile } = useAuth();
   const isAdmin = profile?.role === 'ime_admin';
+  // company_admin / plant_manager can also manage WOs; RLS enforces their scope.
+  const canManage = isAdmin || profile?.role === 'company_admin' || profile?.role === 'plant_manager';
 
   const [rows, setRows] = useState<WORow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [detailWO, setDetailWO] = useState<WORow | null>(null);
   const [filterStatus, setFilterStatus]     = useState('');
   const [filterPriority, setFilterPriority] = useState('');
   const [search, setSearch] = useState('');
@@ -106,27 +108,21 @@ export default function WorkOrders() {
     if (selectedLocationId) q = q.eq('location_id', selectedLocationId);
     const { data } = await q;
 
-    // finding condition/point (separate fetch avoids the dual-FK ambiguity)
+    // finding condition (separate fetch avoids the dual-FK ambiguity)
     const { data: fs } = await supabase
       .from('findings')
-      .select('id, condition, measurement_points ( name )')
+      .select('id, condition')
       .eq('company_id', selectedCompanyId);
-    const fRows = (fs ?? []) as unknown as { id: string; condition: string; measurement_points: { name: string } | null }[];
-    const fMap = new Map(fRows.map(f =>
-      [f.id, { condition: f.condition, point: f.measurement_points?.name ?? null }] as [string, { condition: string; point: string | null }]));
+    const fMap = new Map(((fs ?? []) as { id: string; condition: string }[]).map(f => [f.id, f.condition]));
 
-    const flat: WORow[] = ((data ?? []) as unknown as RawWO[]).map(w => {
-      const f = w.finding_id ? fMap.get(w.finding_id) : null;
-      return {
-        id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
-        priority: w.priority, status: w.status, assignee: w.assignee, sapNo: w.sap_no,
-        cmmsWoNo: w.cmms_wo_no, closeNote: w.close_note, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
-        equipment: w.equipment?.tag ?? '—',
-        line: w.equipment?.sections?.lines?.name ?? '—',
-        findingCondition: f?.condition ?? null,
-        findingPoint: f?.point ?? null,
-      };
-    });
+    const flat: WORow[] = ((data ?? []) as unknown as RawWO[]).map(w => ({
+      id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
+      priority: w.priority, status: w.status, assignee: w.assignee, sapNo: w.sap_no,
+      cmmsWoNo: w.cmms_wo_no, closeNote: w.close_note, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
+      equipment: w.equipment?.tag ?? '—',
+      line: w.equipment?.sections?.lines?.name ?? '—',
+      findingCondition: w.finding_id ? (fMap.get(w.finding_id) ?? null) : null,
+    }));
     setRows(flat);
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
@@ -190,7 +186,6 @@ export default function WorkOrders() {
       'Title': w.title ?? '',
       'Description': w.description ?? '',
       'Finding Condition': w.findingCondition ?? '',
-      'Finding Point': w.findingPoint ?? '',
       'Priority': w.priority,
       'Status': STATUS_LABEL[w.status],
       'Assignee': w.assignee ?? '',
@@ -279,15 +274,16 @@ export default function WorkOrders() {
                 <th className="px-3 py-3 text-left">Assignee</th>
                 <th className="px-3 py-3 text-left">Due</th>
                 <th className="px-3 py-3 text-left">Created</th>
-                {isAdmin && <th className="px-3 py-3 text-right">Action</th>}
+                {canManage && <th className="px-3 py-3 text-right">Action</th>}
               </tr>
             </thead>
             <tbody>
               {visible.map(w => (
-                <tr key={w.id} className="border-b border-gray-50 hover:bg-gray-50/60 transition-colors">
+                <tr key={w.id} onClick={() => setDetailWO(w)}
+                  className="border-b border-gray-50 hover:bg-blue-50/40 cursor-pointer transition-colors">
                   <td className="px-3 py-2.5 font-mono font-semibold text-primary">{w.woNumber}</td>
-                  <td className="px-3 py-2.5">
-                    {isAdmin ? (
+                  <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                    {canManage ? (
                       <input
                         key={`${w.id}-${w.cmmsWoNo ?? ''}`}
                         defaultValue={w.cmmsWoNo ?? ''}
@@ -307,14 +303,14 @@ export default function WorkOrders() {
                   <td className="px-3 py-2.5 text-gray-600 max-w-[240px] truncate" title={w.description ?? ''}>{w.title ?? '—'}</td>
                   <td className="px-3 py-2.5">
                     {w.findingCondition
-                      ? <span className="text-xs text-gray-500">{w.findingCondition} · {w.findingPoint}</span>
+                      ? <span className="text-xs text-gray-500">{w.findingCondition}</span>
                       : <span className="text-gray-300">—</span>}
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${PRIORITY_BADGE[w.priority]}`}>{w.priority}</span>
                   </td>
-                  <td className="px-3 py-2.5">
-                    {isAdmin ? (
+                  <td className="px-3 py-2.5" onClick={e => e.stopPropagation()}>
+                    {canManage ? (
                       <select value={w.status} onChange={e => updateStatus(w.id, e.target.value as WOStatus)}
                         className={`px-2 py-0.5 rounded-full text-[11px] font-bold border-0 cursor-pointer ${STATUS_BADGE[w.status]}`}>
                         <option value="open">To Be Scheduled</option><option value="in_progress">In Progress</option>
@@ -330,8 +326,8 @@ export default function WorkOrders() {
                   <td className="px-3 py-2.5 text-gray-500">{w.assignee ?? '—'}</td>
                   <td className="px-3 py-2.5 text-gray-400 text-xs">{fmtDate(w.dueDate)}</td>
                   <td className="px-3 py-2.5 text-gray-400 text-xs">{fmtDate(w.createdAt)}</td>
-                  {isAdmin && (
-                    <td className="px-3 py-2.5 text-right">
+                  {canManage && (
+                    <td className="px-3 py-2.5 text-right" onClick={e => e.stopPropagation()}>
                       <button onClick={() => remove(w.id, w.findingId)} className="p-1.5 text-gray-400 hover:text-red-500">
                         <Trash2 size={14} />
                       </button>
@@ -344,6 +340,10 @@ export default function WorkOrders() {
         )}
       </div>
 
+      {detailWO && (
+        <WODetailModal wo={detailWO} onClose={() => setDetailWO(null)} />
+      )}
+
       {closingWO && (
         <CloseWOModal
           wo={closingWO}
@@ -351,6 +351,65 @@ export default function WorkOrders() {
           onConfirm={note => confirmClose(closingWO.id, note)}
         />
       )}
+    </div>
+  );
+}
+
+// ── Detail popup — full work order at a glance ────────────────────────────────
+
+function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
+  const rows: [string, React.ReactNode][] = [
+    ['CMMS WO #', wo.cmmsWoNo ?? '—'],
+    ['Asset', <span className="font-mono font-semibold text-gray-800">{wo.equipment}</span>],
+    ['Area', wo.line],
+    ['Finding', wo.findingCondition ?? '—'],
+    ['Priority', <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${PRIORITY_BADGE[wo.priority]}`}>{wo.priority}</span>],
+    ['Status', <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[wo.status]}`}>{STATUS_LABEL[wo.status]}</span>],
+    ['Assignee', wo.assignee ?? '—'],
+    ['SAP No.', wo.sapNo ?? '—'],
+    ['Due date', fmtDate(wo.dueDate)],
+    ['Created', fmtDate(wo.createdAt)],
+  ];
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] shadow-2xl overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-base font-bold text-primary">{wo.woNumber}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[wo.status]}`}>{STATUS_LABEL[wo.status]}</span>
+            </div>
+            <h2 className="text-base font-bold text-gray-900 mt-1.5">{wo.title ?? 'Work order'}</h2>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X size={16} /></button>
+        </div>
+
+        <div className="p-6 overflow-y-auto space-y-4">
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
+            {rows.map(([label, value]) => (
+              <div key={label}>
+                <dt className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5">{label}</dt>
+                <dd className="text-sm text-gray-700">{value}</dd>
+              </div>
+            ))}
+          </dl>
+
+          {wo.description && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Description</p>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">{wo.description}</p>
+            </div>
+          )}
+
+          {wo.status === 'closed' && wo.closeNote && (
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Closing note</p>
+              <p className="text-sm text-gray-700 rounded-lg bg-green-50 border border-green-100 px-3 py-2">{wo.closeNote}</p>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

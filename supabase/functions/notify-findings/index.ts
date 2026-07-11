@@ -59,15 +59,12 @@ Deno.serve(async (req) => {
     const emails = (recipients ?? []).map(r => r.email).filter((e): e is string => !!e)
     if (emails.length === 0) return json({ error: 'No valid recipients found' }, 400)
 
-    // ── Findings + asset context for the email body ───────────────────────────
+    // ── Findings + asset context for the email body (per-equipment) ───────────
     const { data: findings } = await admin
       .from('findings')
       .select(`
         id, condition, finding, recommendation, generated_tag, creation_date, notified_at, company_id, location_id,
-        measurement_points (
-          name,
-          components ( name, equipment ( tag, sections ( uas_name, lines ( name, locations ( name ) ) ) ) )
-        )
+        equipment ( tag, sections ( uas_name, lines ( name, locations ( name ) ) ) )
       `)
       .in('id', findingIds)
     if (!findings || findings.length === 0) return json({ error: 'No findings found for the given ids' }, 400)
@@ -76,8 +73,7 @@ Deno.serve(async (req) => {
 
     // deno-lint-ignore no-explicit-any
     const rowHtml = (f: any) => {
-      const mp   = f.measurement_points
-      const eq   = mp?.components?.equipment
+      const eq   = f.equipment
       const sec  = eq?.sections
       const [bg, fg] = CONDITION_COLORS[f.condition] ?? ['#eee', '#333']
       return `
@@ -86,15 +82,15 @@ Deno.serve(async (req) => {
             <span style="background:${bg};color:${fg};font-weight:bold;font-size:11px;padding:2px 8px;border-radius:10px">${safe(f.condition)}</span>
           </td>
           <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${safe(sec?.lines?.name)}</td>
+          <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${safe(sec?.uas_name)}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb"><b style="font-family:monospace">${safe(eq?.tag)}</b></td>
-          <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${safe(mp?.components?.name)} · ${safe(mp?.name)}</td>
           <td style="padding:6px 10px;border-bottom:1px solid #e5e7eb">${safe(f.recommendation || '—')}</td>
         </tr>`
     }
 
-    const loc = (findings[0] as { measurement_points?: { components?: { equipment?: { sections?: { lines?: { locations?: { name?: string } } } } } } })
-      ?.measurement_points?.components?.equipment?.sections?.lines?.locations?.name ?? ''
-    const subject = `Ultrasound findings notification${loc ? ` — ${loc}` : ''} (${findings.length} finding${findings.length !== 1 ? 's' : ''})`
+    const loc = (findings[0] as { equipment?: { sections?: { lines?: { locations?: { name?: string } } } } })
+      ?.equipment?.sections?.lines?.locations?.name ?? ''
+    const subject = `Ultrasound findings notification${loc ? ` — ${loc}` : ''} (${findings.length} asset${findings.length !== 1 ? 's' : ''})`
 
     const html = `
       <div style="font-family:Arial,sans-serif;font-size:14px;color:#1f2937">
@@ -105,8 +101,8 @@ Deno.serve(async (req) => {
           <tr style="text-align:left;color:#6b7280;font-size:11px;text-transform:uppercase">
             <th style="padding:6px 10px;border-bottom:2px solid #e5e7eb">Condition</th>
             <th style="padding:6px 10px;border-bottom:2px solid #e5e7eb">Area</th>
+            <th style="padding:6px 10px;border-bottom:2px solid #e5e7eb">Functional Location</th>
             <th style="padding:6px 10px;border-bottom:2px solid #e5e7eb">Machine</th>
-            <th style="padding:6px 10px;border-bottom:2px solid #e5e7eb">Point</th>
             <th style="padding:6px 10px;border-bottom:2px solid #e5e7eb">Recommendation</th>
           </tr>
           ${findings.map(rowHtml).join('')}
@@ -114,8 +110,8 @@ Deno.serve(async (req) => {
         <p style="margin-top:16px;color:#9ca3af;font-size:12px">Open the IME Platform → Findings tab for full details and to create work orders.</p>
       </div>`
 
-    const text = findings.map((f: { condition?: string; measurement_points?: { name?: string; components?: { equipment?: { tag?: string } } }; recommendation?: string }) =>
-      `[${f.condition}] ${f.measurement_points?.components?.equipment?.tag ?? ''} ${f.measurement_points?.name ?? ''} — ${f.recommendation ?? 'no recommendation'}`
+    const text = findings.map((f: { condition?: string; equipment?: { tag?: string }; recommendation?: string }) =>
+      `[${f.condition}] ${f.equipment?.tag ?? ''} — ${f.recommendation ?? 'no recommendation'}`
     ).join('\n')
 
     const client = new SMTPClient({

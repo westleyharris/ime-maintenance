@@ -224,6 +224,7 @@ export default function Dashboard() {
   const [rows, setRows]               = useState<FlatAlarm[]>([]);
   const [equipList, setEquipList]     = useState<{ id: string; status: string; line: string }[]>([]);
   const [notifyToWo, setNotifyToWo]   = useState<{ avgMs: number; count: number } | null>(null);
+  const [awaitingWo, setAwaitingWo]   = useState<{ count: number; avgMs: number; maxMs: number } | null>(null);
   const [loading, setLoading]         = useState(false);
   const [lastReading, setLastReading] = useState<string | null>(null);
   const [nextVisit, setNextVisit]     = useState<string | null>(null);
@@ -343,6 +344,26 @@ export default function Dashboard() {
     setNotifyToWo(deltas.length
       ? { avgMs: deltas.reduce((a, b) => a + b, 0) / deltas.length, count: deltas.length }
       : null);
+
+    // KPI (pre-WO): findings that were notified but still have NO work order —
+    // the backlog awaiting action, and how long they've waited since the email.
+    let fq = supabase
+      .from('findings')
+      .select('notified_at')
+      .eq('company_id', selectedCompanyId)
+      .not('notified_at', 'is', null)
+      .is('work_order_id', null)
+      .neq('status', 'closed');
+    if (selectedLocationId) fq = fq.eq('location_id', selectedLocationId);
+    const { data: awaitRows } = await fq;
+    const ages = (awaitRows ?? [])
+      .map(f => Date.now() - new Date(f.notified_at as string).getTime())
+      .filter(a => a >= 0);
+    setAwaitingWo({
+      count: ages.length,
+      avgMs: ages.length ? ages.reduce((a, b) => a + b, 0) / ages.length : 0,
+      maxMs: ages.length ? Math.max(...ages) : 0,
+    });
 
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
@@ -645,18 +666,44 @@ export default function Dashboard() {
             {/* Divider */}
             <div className="border-t border-gray-200" />
 
-            {/* Notification → Work Order response time */}
+            {/* Notification response — pre-WO backlog + post-WO response time */}
             <div>
               <h2 className="text-sm font-semibold text-gray-700">Notification Response</h2>
-              <p className="text-xs text-gray-400 mt-0.5">Mean time from findings email to work order</p>
-              {notifyToWo == null ? (
-                <div className="flex items-center justify-center h-16 text-gray-300 text-sm">No notified findings with work orders yet</div>
-              ) : (
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className="text-4xl font-black leading-none text-gray-900">{fmtDuration(notifyToWo.avgMs)}</span>
-                  <span className="text-xs text-gray-400">avg over {notifyToWo.count} work order{notifyToWo.count !== 1 ? 's' : ''}</span>
+              <p className="text-xs text-gray-400 mt-0.5">Findings notified to the plant, before &amp; after a work order is opened</p>
+              <div className="mt-3 grid grid-cols-2 gap-3">
+                {/* Pre: awaiting a work order */}
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Awaiting Work Order</p>
+                  {awaitingWo == null ? (
+                    <p className="text-sm text-gray-300 mt-2">—</p>
+                  ) : awaitingWo.count === 0 ? (
+                    <>
+                      <p className="text-3xl font-black leading-none text-green-600 mt-1.5">0</p>
+                      <p className="text-[11px] text-gray-400 mt-1">all notified findings actioned</p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-black leading-none text-orange-500 mt-1.5">{awaitingWo.count}</p>
+                      <p className="text-[11px] text-gray-400 mt-1">
+                        notified, no WO · <span className="font-semibold text-gray-600">{fmtDuration(awaitingWo.avgMs)}</span> avg wait
+                        <span className="block">oldest <span className="font-semibold text-gray-600">{fmtDuration(awaitingWo.maxMs)}</span></span>
+                      </p>
+                    </>
+                  )}
                 </div>
-              )}
+                {/* Post: mean time to open the WO */}
+                <div className="rounded-xl border border-gray-200 p-3">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-gray-400">Notify → Work Order</p>
+                  {notifyToWo == null ? (
+                    <p className="text-[11px] text-gray-300 mt-2">no work orders from notified findings yet</p>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-black leading-none text-gray-900 mt-1.5">{fmtDuration(notifyToWo.avgMs)}</p>
+                      <p className="text-[11px] text-gray-400 mt-1">mean, over {notifyToWo.count} work order{notifyToWo.count !== 1 ? 's' : ''}</p>
+                    </>
+                  )}
+                </div>
+              </div>
             </div>
 
           </div>

@@ -665,25 +665,32 @@ function KPIsTab({ components, status, lastReplacedAt, equipmentId }: {
   lastReplacedAt: string | null;
   equipmentId: string;
 }) {
-  // Work-order derived KPIs: open backlog + mean notification→WO time
-  const [woKpis, setWoKpis] = useState<{ backlog: number; notifyAvgMs: number | null; notifyCount: number } | null>(null);
+  // Work-order derived KPIs: open backlog + mean notification→WO time, plus the
+  // pre-WO wait (this asset notified but no work order opened yet).
+  const [woKpis, setWoKpis] = useState<{ backlog: number; notifyAvgMs: number | null; notifyCount: number; awaitingMs: number | null } | null>(null);
   useEffect(() => {
-    supabase
-      .from('work_orders')
-      .select('status, created_at, finding_notified_at')
-      .eq('equipment_id', equipmentId)
-      .then(({ data }) => {
-        const wos = data ?? [];
-        const deltas = wos
-          .filter(w => w.finding_notified_at)
-          .map(w => new Date(w.created_at).getTime() - new Date(w.finding_notified_at as string).getTime())
-          .filter(d => d >= 0);
-        setWoKpis({
-          backlog: wos.filter(w => w.status === 'open' || w.status === 'in_progress').length,
-          notifyAvgMs: deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : null,
-          notifyCount: deltas.length,
-        });
+    (async () => {
+      const [{ data: woData }, { data: fData }] = await Promise.all([
+        supabase.from('work_orders').select('status, created_at, finding_notified_at').eq('equipment_id', equipmentId),
+        supabase.from('findings').select('notified_at, work_order_id, status').eq('equipment_id', equipmentId),
+      ]);
+      const wos = woData ?? [];
+      const deltas = wos
+        .filter(w => w.finding_notified_at)
+        .map(w => new Date(w.created_at).getTime() - new Date(w.finding_notified_at as string).getTime())
+        .filter(d => d >= 0);
+      // notified but not yet linked to a WO → time waiting since the notification
+      const awaiting = (fData ?? [])
+        .filter(f => f.notified_at && !f.work_order_id && f.status !== 'closed')
+        .map(f => Date.now() - new Date(f.notified_at as string).getTime())
+        .filter(a => a >= 0);
+      setWoKpis({
+        backlog: wos.filter(w => w.status === 'open' || w.status === 'in_progress').length,
+        notifyAvgMs: deltas.length ? deltas.reduce((a, b) => a + b, 0) / deltas.length : null,
+        notifyCount: deltas.length,
+        awaitingMs: awaiting.length ? Math.max(...awaiting) : null,
       });
+    })();
   }, [equipmentId]);
 
   const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
@@ -703,6 +710,10 @@ function KPIsTab({ components, status, lastReplacedAt, equipmentId }: {
     { label: 'MTTR',            value: '—' as string | number,   sub: 'hours',    note: 'Requires work order history' },
     { label: 'Availability',    value: '—' as string | number,   sub: '%',        note: 'Requires work order history' },
     { label: 'WO Backlog',      value: woKpis ? woKpis.backlog : '—', sub: 'open', note: '' },
+    { label: 'Awaiting WO',
+      value: woKpis?.awaitingMs != null ? fmtDuration(woKpis.awaitingMs) : '—',
+      sub: woKpis?.awaitingMs != null ? 'since notification' : 'not waiting',
+      note: woKpis?.awaitingMs != null ? 'Notified — no work order yet' : '' },
     { label: 'Notify → WO',
       value: woKpis?.notifyAvgMs != null ? fmtDuration(woKpis.notifyAvgMs) : '—',
       sub: woKpis?.notifyCount ? `avg of ${woKpis.notifyCount} WO${woKpis.notifyCount !== 1 ? 's' : ''}` : 'mean response',
