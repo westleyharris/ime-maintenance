@@ -719,20 +719,20 @@ export default function Ultrasound() {
                             <p className="text-[10px] text-gray-400 truncate">{r.component}</p>
                           </div>
 
-                          {/* RMS + delta */}
+                          {/* Crest Factor + delta (primary — drives the alarm level) */}
                           <div className="shrink-0 text-right">
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wide">RMS</p>
+                            <p className="text-[10px] text-gray-400 uppercase tracking-wide">CF</p>
                             <div className="flex items-center gap-1.5 justify-end">
-                              <p className="text-xs font-mono font-semibold text-gray-700">{fmt(r.overallRms)}</p>
-                              <DeltaArrow d={r.deltaRms} />
+                              <p className="text-xs font-mono font-semibold text-gray-700">{fmt(r.crestFactor)}</p>
+                              <DeltaArrow d={r.deltaCrest} />
                             </div>
                           </div>
 
                           {/* Other metrics */}
                           <div className="hidden lg:flex items-center gap-4 flex-1 shrink-0 text-xs text-gray-500 font-mono">
+                            <span title="Overall RMS" className="inline-flex items-center gap-1"><span className="text-gray-300">rms</span>{fmt(r.overallRms)}<DeltaArrow d={r.deltaRms} /></span>
                             <span title="Max RMS" className="inline-flex items-center gap-1"><span className="text-gray-300">max</span>{fmt(r.maxRms)}<DeltaArrow d={r.deltaMaxRms} /></span>
                             <span title="Peak" className="inline-flex items-center gap-1"><span className="text-gray-300">pk</span>{fmt(r.peak)}<DeltaArrow d={r.deltaPeak} /></span>
-                            <span title="Crest Factor" className="inline-flex items-center gap-1"><span className="text-gray-300">cf</span>{fmt(r.crestFactor)}<DeltaArrow d={r.deltaCrest} /></span>
                           </div>
 
                           {/* Alarm badge */}

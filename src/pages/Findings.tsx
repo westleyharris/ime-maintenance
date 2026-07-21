@@ -433,6 +433,38 @@ function FindingModal({
   const [showWO, setShowWO] = useState(defaultShowWO);
   const [woError, setWoError] = useState<string | null>(null);
 
+  // The specific measurement points driving this asset-level finding (the ones
+  // whose latest reading is Warning/Danger), e.g. "NDE · Gearbox".
+  const [pointsInAlarm, setPointsInAlarm] = useState<{ id: string; name: string; component: string; condition: string }[] | null>(null);
+  useEffect(() => {
+    if (!finding.equipmentId) { setPointsInAlarm([]); return; }
+    let cancelled = false;
+    (async () => {
+      const { data: comps } = await supabase
+        .from('components')
+        .select('name, measurement_points ( id, name )')
+        .eq('equipment_id', finding.equipmentId);
+      const pts = ((comps ?? []) as unknown as { name: string; measurement_points: { id: string; name: string }[] }[])
+        .flatMap(c => (c.measurement_points ?? []).map(p => ({ id: p.id, name: p.name, component: c.name })));
+      if (pts.length === 0) { if (!cancelled) setPointsInAlarm([]); return; }
+      const { data: meas } = await supabase
+        .from('measurements')
+        .select('measurement_point_id, alarm_level, measured_at')
+        .in('measurement_point_id', pts.map(p => p.id))
+        .order('measured_at', { ascending: false });
+      const latest = new Map<string, string>();
+      for (const m of (meas ?? []) as { measurement_point_id: string; alarm_level: string }[]) {
+        if (!latest.has(m.measurement_point_id)) latest.set(m.measurement_point_id, m.alarm_level);
+      }
+      const inAlarm = pts
+        .map(p => ({ ...p, condition: latest.get(p.id) ?? 'Normal' }))
+        .filter(p => p.condition === 'Warning' || p.condition === 'Danger')
+        .sort((a, b) => (a.condition === b.condition ? 0 : a.condition === 'Danger' ? -1 : 1));
+      if (!cancelled) setPointsInAlarm(inAlarm);
+    })();
+    return () => { cancelled = true; };
+  }, [finding.equipmentId]);
+
   // Work-order form
   const [woTitle, setWoTitle]   = useState(finding.woText ?? `PdM Finding - ${finding.equipment}`);
   const [woDesc, setWoDesc]     = useState(
@@ -573,6 +605,24 @@ function FindingModal({
           )}
           {!showWO ? (
             <>
+              <div>
+                <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Points in alarm</p>
+                {pointsInAlarm === null ? (
+                  <p className="text-xs text-gray-300">Loading…</p>
+                ) : pointsInAlarm.length === 0 ? (
+                  <p className="text-xs text-gray-400">No measurement points currently in Warning or Danger.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {pointsInAlarm.map(p => (
+                      <span key={p.id}
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium ${p.condition === 'Danger' ? 'bg-red-50 text-red-700' : 'bg-orange-50 text-orange-700'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${p.condition === 'Danger' ? 'bg-red-500' : 'bg-orange-500'}`} />
+                        {p.name} · {p.component}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
               <Field label="Recommendation (expert)">
                 <textarea value={recommendation} onChange={e => setRecommendation(e.target.value)} disabled={!isAdmin}
                   rows={3} placeholder={isAdmin ? 'Enter recommendation…' : 'No recommendation yet'}

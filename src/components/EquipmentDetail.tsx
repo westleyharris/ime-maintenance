@@ -476,10 +476,10 @@ function AssetHealthTab({ components, notes, info }: {
                                           <span className="text-sm font-medium text-gray-700 truncate">{pt.pointName}</span>
                                           <div className="flex items-center gap-3 shrink-0">
                                             {pt.overallRms != null && (
-                                              <span className="text-xs text-gray-400 tabular-nums">{pt.overallRms.toFixed(2)} RMS</span>
+                                              <span className="text-xs text-gray-300 tabular-nums">{pt.overallRms.toFixed(2)} RMS</span>
                                             )}
                                             {pt.crestFactor != null && (
-                                              <span className="text-xs text-gray-300 tabular-nums">{pt.crestFactor.toFixed(2)} cf</span>
+                                              <span className="text-xs text-gray-600 font-semibold tabular-nums">{pt.crestFactor.toFixed(2)} cf</span>
                                             )}
                                             <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${A(pt.alarmLevel).badge}`}>
                                               {pt.alarmLevel}

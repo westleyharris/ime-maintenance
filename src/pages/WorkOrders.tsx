@@ -63,14 +63,37 @@ const STATUS_LABEL: Record<WOStatus, string> = {
 };
 
 // Preset closing reasons — picked from a dropdown when a WO is closed
-const CLOSE_REASONS = [
-  'Nothing was found',
-  'Was sent to repair',
-  'Repaired in place',
-  'Component replaced',
-  'Adjusted / lubricated',
-  'Monitoring — no further action',
-  'Other',
+// Closing reason = the confirmed root cause, grouped by component type. "No
+// finding" lets them close without a root cause and just leave a follow-up note.
+const CLOSE_REASON_GROUPS: { group: string; reasons: string[] }[] = [
+  { group: 'Motor', reasons: [
+    'Motor: Lubrication Deficiency (Insufficient or Degraded Lubrication)',
+    'Motor: Early Bearing Fatigue',
+    'Motor: Outer Race Fault',
+    'Motor: Inner Race Fault',
+    'Motor: Rolling Element Fault',
+    'Motor: Cage Fault',
+    'Motor: Advanced Bearing Damage',
+    'Motor: Over-Lubrication',
+  ] },
+  { group: 'Gearbox', reasons: [
+    'Gearbox: Abnormal Gear Wear',
+    'Gearbox: Gear Mesh Fault',
+    'Gearbox: Chipped Tooth',
+    'Gearbox: Broken Tooth',
+    'Gearbox: Excessive Backlash',
+    'Gearbox: Under-Lubricated',
+    'Gearbox: Over-Lubricated',
+    'Gearbox: Contaminated Lubricant (dirt/debris)',
+    'Gearbox: Burnt Odor',
+    'Gearbox: Moisture Present',
+    'Gearbox: Broken Seals',
+    'Gearbox: Output Shaft Bent',
+  ] },
+  { group: 'Other', reasons: [
+    'No finding',
+    'Other',
+  ] },
 ];
 
 function fmtDate(iso: string | null) {
@@ -446,11 +469,15 @@ function CloseWOModal({ wo, onCancel, onConfirm }: {
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Closing reason <span className="text-red-400">*</span></p>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Closing reason (root cause) <span className="text-red-400">*</span></p>
             <select value={reason} onChange={e => setReason(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20">
               <option value="">Select a reason…</option>
-              {CLOSE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+              {CLOSE_REASON_GROUPS.map(g => (
+                <optgroup key={g.group} label={g.group}>
+                  {g.reasons.map(r => <option key={r} value={r}>{r}</option>)}
+                </optgroup>
+              ))}
             </select>
           </div>
           <div>
