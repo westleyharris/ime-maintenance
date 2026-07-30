@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Building2, MapPin, Users, Plus, Loader2, X, ChevronRight, Check, Mail } from 'lucide-react';
+import { Building2, MapPin, Users, Plus, Loader2, X, ChevronRight, Check, Mail, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 import type { UserRole } from '../types/auth';
 
 interface Company  { id: string; name: string; industry: string | null; country: string | null; }
@@ -34,9 +35,12 @@ export default function Admin() {
   const [loadingLocations, setLoadingLocations] = useState(false);
 
   // ── Users ──────────────────────────────────────────────────────────────────
+  const { user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [allLocations, setAllLocations] = useState<Location[]>([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deletingUser, setDeletingUser] = useState(false);
 
   // ── Add Company form ───────────────────────────────────────────────────────
   const [showAddCompany, setShowAddCompany] = useState(false);
@@ -140,6 +144,7 @@ export default function Admin() {
     setEditCompanyId(u.company_id);
     setEditLocationId(u.location_id);
     setUserError('');
+    setConfirmDeleteId(null);   // don't carry a pending confirm across users
   };
 
   // ── Save user assignment ───────────────────────────────────────────────────
@@ -171,6 +176,30 @@ export default function Admin() {
     setUsers(prev => prev.map(u => u.id === editingUserId ? { ...u, ...updates } as UserRow : u));
     setEditingUserId(null);
     setSavingUser(false);
+  };
+
+  // ── Remove user ────────────────────────────────────────────────────────────
+  // Deleting an auth user needs the service role, so it goes through the
+  // delete-user edge function (gated on the caller being an ime_admin; it also
+  // blocks self-deletion and removing the last ime_admin). The auth user cascades
+  // to public.profiles; past work orders / feedback keep their records.
+  const deleteUser = async (id: string) => {
+    setDeletingUser(true); setUserError('');
+
+    const { data, error } = await supabase.functions.invoke('delete-user', {
+      body: { user_id: id },
+    });
+    const failed = error || (data as { error?: string })?.error;
+    if (failed) {
+      setUserError(typeof failed === 'string' ? failed : 'Could not remove user. Please try again.');
+      setDeletingUser(false);
+      return;
+    }
+
+    setUsers(prev => prev.filter(u => u.id !== id));
+    setConfirmDeleteId(null);
+    setEditingUserId(null);
+    setDeletingUser(false);
   };
 
   // ── Send invite ────────────────────────────────────────────────────────────
@@ -501,7 +530,7 @@ export default function Admin() {
                         {userError && <p className="text-xs text-red-600">{userError}</p>}
 
                         <div className="flex items-center gap-2">
-                          <button onClick={saveUser} disabled={savingUser}
+                          <button onClick={saveUser} disabled={savingUser || deletingUser}
                             className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary text-white text-xs font-semibold hover:bg-primary-light disabled:opacity-60 transition-colors">
                             {savingUser ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
                             Save
@@ -510,6 +539,31 @@ export default function Admin() {
                             className="px-4 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors">
                             Cancel
                           </button>
+
+                          {/* Remove user — hidden for your own account */}
+                          {u.id !== currentUser?.id && (
+                            <div className="ml-auto flex items-center gap-2">
+                              {confirmDeleteId === u.id ? (
+                                <>
+                                  <span className="text-xs text-gray-500">Remove {u.email}?</span>
+                                  <button onClick={() => deleteUser(u.id)} disabled={deletingUser}
+                                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-60 transition-colors">
+                                    {deletingUser ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                    Confirm
+                                  </button>
+                                  <button onClick={() => setConfirmDeleteId(null)} disabled={deletingUser}
+                                    className="px-3 py-2 rounded-lg text-xs font-semibold text-gray-500 hover:bg-gray-100 transition-colors">
+                                    Keep
+                                  </button>
+                                </>
+                              ) : (
+                                <button onClick={() => { setConfirmDeleteId(u.id); setUserError(''); }}
+                                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors">
+                                  <Trash2 size={12} /> Remove user
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
