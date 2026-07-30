@@ -25,7 +25,10 @@ Deno.serve(async (req) => {
       })
     }
 
-    const siteUrl = Deno.env.get('SITE_URL') ?? 'http://localhost:5173'
+    // Where the invite link lands. Use the canonical www host — the apex
+    // (portal-ime-us.com) 308-redirects to www, and an extra hop on an auth
+    // callback risks dropping the token carried in the URL fragment.
+    const siteUrl = Deno.env.get('SITE_URL') ?? 'https://www.portal-ime-us.com'
 
     const { data, error: inviteError } = await supabase.auth.admin.inviteUserByEmail(email, {
       data: { role, company_id: company_id ?? null, location_id: location_id ?? null },

@@ -54,7 +54,17 @@
       "Bash(curl -s 'https://gszfyelaezdftlwtzrjw.supabase.co/rest/v1/findings?select=id,condition,equipment\\(id,tag,sections\\(uas_name,lines\\(name\\)\\)\\)&limit=1' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10')",
       "Bash(pwsh -NoProfile -Command '$ErrorActionPreference=\"Stop\"; $t=[System.Management.Automation.PSParser]::Tokenize\\(\\(Get-Content -Raw scripts/sync-uas3.ps1\\), [ref]$null\\); if\\($?\\){\"PARSE OK \\(\"+$t.Count+\" tokens\\)\"}')",
       "Bash(read A B)",
-      "Bash(curl -s -o /dev/null -w 'cleanup temp admin -> %{http_code}\\\\n' -X DELETE https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/admin/users/__TRACKED_VAR__ -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10')"
+      "Bash(curl -s -o /dev/null -w 'cleanup temp admin -> %{http_code}\\\\n' -X DELETE https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/admin/users/__TRACKED_VAR__ -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10')",
+      "Bash(curl -s -o /dev/null -w \"portal-ime-us.com -> HTTP %{http_code} \\(final: %{url_effective}\\)\\\\n\" -L --max-time 15 https://portal-ime-us.com/)",
+      "Bash(curl -s -o /dev/null -w \"vercel url    -> HTTP %{http_code}\\\\n\" -L --max-time 15 https://ime-maintenance-theta.vercel.app/)",
+      "Bash(curl -s -o /dev/null -w \"apex: %{http_code} -> %{redirect_url}\\\\n\" --max-time 15 https://portal-ime-us.com/)",
+      "Bash(curl -s -o /dev/null -w \"www : %{http_code}\\\\n\" --max-time 15 https://www.portal-ime-us.com/)",
+      "Bash(curl -s --max-time 15 https://www.portal-ime-us.com/)",
+      "Bash(curl -s -o /dev/null -w \"www/set-password: %{http_code}\\\\n\" --max-time 15 https://www.portal-ime-us.com/set-password)",
+      "Bash(curl -s --max-time 15 https://ime-maintenance-theta.vercel.app/)",
+      "mcp__849c9b65-ff37-4e53-8154-490e5db68428__search_docs",
+      "Bash(python3 - /Users/westleyharris/.claude/projects/-Users-westleyharris-Desktop-Projects-IME-Maintenance-Dashboard/82bf7598-1658-4609-83b7-acdeab884fc0/tool-results/mcp-849c9b65-ff37-4e53-8154-490e5db68428-search_docs-1785448908453.txt)",
+      "Bash(python3 -c \"import json;print\\(json.dumps\\(open\\('supabase/functions/invite-user/index.ts'\\).read\\(\\)\\)\\)\")"
     ]
   }
 }
