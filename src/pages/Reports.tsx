@@ -670,7 +670,8 @@ export default function Reports() {
 
   // ── Render ────────────────────────────────────────────────────────────────
   return (
-    <div className="grid gap-8 w-full" style={{ gridTemplateColumns: '260px 1fr' }}>
+    // single column on phones; the 260px control rail only makes sense with room beside it
+    <div className="grid gap-6 lg:gap-8 w-full grid-cols-1 lg:grid-cols-[260px_1fr]">
 
       {/* ════ SIDEBAR ════ */}
       <aside className="flex flex-col gap-0">

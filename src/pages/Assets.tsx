@@ -81,7 +81,9 @@ function AssetTreeNode({
     <div>
       <div
         className={`flex items-center py-2.5 px-2 rounded-lg group ${isEquipment ? 'hover:bg-blue-50 cursor-pointer' : 'hover:bg-gray-50 cursor-default'}`}
-        style={{ paddingLeft: `${depth * 24 + 8}px` }}
+        // Tighter indent step on phones — 24px/level left deep nodes ~100px of
+        // label width. The CSS var is set per breakpoint in index.css.
+        style={{ paddingLeft: `calc(${depth} * var(--tree-indent, 24px) + 8px)` }}
         onClick={isEquipment ? () => onSelectEquipment(node.id, node.name) : undefined}
       >
         {hasChildren ? (
@@ -99,7 +101,9 @@ function AssetTreeNode({
         <span className={`text-sm font-medium flex-1 truncate ${isEquipment ? 'text-primary group-hover:underline' : 'text-gray-800'}`}>
           {node.name}
         </span>
-        <span className={`text-xs px-2.5 py-0.5 rounded border font-medium mr-3 shrink-0 ${typeBadgeColors[node.type] ?? 'bg-gray-50 text-gray-700 border-gray-200'}`}>
+        {/* Type is already conveyed by the icon; the text badge costs ~70px that
+            deep tree labels need on a phone. */}
+        <span className={`hidden sm:inline text-xs px-2.5 py-0.5 rounded border font-medium mr-3 shrink-0 ${typeBadgeColors[node.type] ?? 'bg-gray-50 text-gray-700 border-gray-200'}`}>
           {typeLabel}
         </span>
       </div>
@@ -392,7 +396,7 @@ export default function Assets() {
         </div>
 
         {counts && (
-          <div className="flex items-center gap-6 px-5 py-4 border-b border-card-border">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 sm:px-5 py-3 sm:py-4 border-b border-card-border">
             <div className="flex items-center gap-1.5 text-sm text-gray-600">
               <Building2 size={14} className="text-blue-500" />
               {t('assets.site')} <span className="font-semibold text-gray-900 ml-1">{counts.site}</span>

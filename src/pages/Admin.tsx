@@ -258,7 +258,7 @@ export default function Admin() {
 
       {/* ── Companies & Locations ── */}
       {activeTab === 'companies' && (
-        <div className="grid grid-cols-2 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-5">
           {/* Companies */}
           <div className="bg-white rounded-xl border border-gray-200 p-5">
             <div className="flex items-center justify-between mb-4">
@@ -396,7 +396,7 @@ export default function Admin() {
                   className="text-gray-400 hover:text-gray-600"><X size={14} /></button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <input placeholder="Email address *" type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
                   className="px-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 bg-white" />
                 <input placeholder="Full name (optional)" value={inviteFullName} onChange={e => setInviteFullName(e.target.value)}

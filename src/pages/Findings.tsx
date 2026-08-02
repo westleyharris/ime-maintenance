@@ -243,8 +243,10 @@ export default function Findings() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        <div className="relative flex-1 min-w-[200px]">
+      {/* Filters — on a phone these stack into a compact 2-col grid instead of
+          five separate wrapped rows pushing the list below the fold. */}
+      <div className="flex items-center gap-2 sm:gap-3 mb-4 flex-wrap">
+        <div className="relative w-full sm:flex-1 sm:min-w-[200px]">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             type="text" value={search} onChange={e => setSearch(e.target.value)}
@@ -253,29 +255,29 @@ export default function Findings() {
           />
         </div>
         <select value={filterLine} onChange={e => setFilterLine(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          className="flex-1 min-w-0 sm:flex-none px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
           <option value="">All areas</option>
           {lineOptions.map(l => <option key={l} value={l}>{l}</option>)}
         </select>
         <select value={filterCondition} onChange={e => setFilterCondition(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          className="flex-1 min-w-0 sm:flex-none px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
           <option value="">All conditions</option>
           <option value="Danger">Danger</option>
           <option value="Warning">Warning</option>
         </select>
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          className="flex-1 min-w-0 sm:flex-none px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
           <option value="">All statuses</option>
           <option value="open">Open</option>
           <option value="wo_created">WO Created</option>
         </select>
-        <span className="text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
+        <span className="hidden sm:inline text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
           <strong className="text-gray-800">{visible.length}</strong> findings
         </span>
         <button
           onClick={handleExport}
           disabled={visible.length === 0}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex-1 min-w-0 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           title="Export the current list to Excel"
         >
           <Download size={14} /> Export
@@ -284,7 +286,7 @@ export default function Findings() {
           <button
             onClick={() => setShowNotify(true)}
             disabled={selectedIds.size === 0}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            className="flex-1 min-w-0 sm:flex-none justify-center flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary-light transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             title="Email the selected findings to IME admins, company admins, and plant managers"
           >
             <Mail size={14} /> Notify{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
@@ -292,8 +294,68 @@ export default function Findings() {
         )}
       </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto border border-gray-100 rounded-2xl bg-white shadow-sm">
+      {/* Mobile: stacked cards. The 12-column table is ~1500px wide and needs
+          4x the screen width to read a single finding on a phone. */}
+      <div className="md:hidden space-y-2">
+        {loading ? (
+          <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-gray-300" /></div>
+        ) : visible.length === 0 ? (
+          <div className="text-center py-12 text-sm text-gray-400 bg-white border border-gray-100 rounded-2xl">
+            No findings match your filters
+          </div>
+        ) : visible.map(r => (
+          <div
+            key={r.id}
+            onClick={() => openFinding(r)}
+            className="bg-white border border-gray-100 rounded-2xl shadow-sm p-3.5 active:bg-blue-50/40 transition-colors"
+          >
+            <div className="flex items-start gap-2.5">
+              {isAdmin && (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(r.id)}
+                  onChange={() => toggleSelected(r.id)}
+                  onClick={e => e.stopPropagation()}
+                  className="cursor-pointer accent-primary mt-1 shrink-0 w-4 h-4"
+                />
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${CONDITION_BADGE[r.condition]}`}>{r.condition}</span>
+                  <span className="font-mono text-sm font-bold text-gray-800 truncate">{r.equipment}</span>
+                </div>
+                <p className="text-xs text-gray-500 mt-1 truncate">{r.line} · {r.section}</p>
+
+                <p className="text-xs text-gray-600 mt-2 line-clamp-2">
+                  {r.recommendation || <span className="text-gray-300 italic">No recommendation yet</span>}
+                </p>
+
+                <div className="flex items-center gap-2 mt-2.5 flex-wrap">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_BADGE[r.status]}`}>{STATUS_LABEL[r.status]}</span>
+                  {r.woNumber && <span className="font-mono text-[11px] font-semibold text-primary">{r.woNumber}</span>}
+                  <span className="text-[11px] text-gray-400">{fmtDate(r.creationDate)}</span>
+                  {r.notifiedAt && (
+                    <span className="flex items-center gap-1 text-[10px] text-gray-400">
+                      <BellRing size={10} /> Notified
+                    </span>
+                  )}
+                  {canCreateWO && r.status === 'open' && r.recommendation?.trim() && (
+                    <button
+                      onClick={e => { e.stopPropagation(); openFinding(r, true); }}
+                      className="ml-auto inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-primary text-white text-[11px] font-semibold"
+                    >
+                      <ClipboardPlus size={12} /> WO
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block overflow-x-auto border border-gray-100 rounded-2xl bg-white shadow-sm">
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-gray-300" /></div>
         ) : (

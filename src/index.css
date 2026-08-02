@@ -20,3 +20,10 @@ body {
   background: #cbd5e1;
   border-radius: 3px;
 }
+
+/* Asset-tree indent step: tighter on phones so deep nodes keep readable
+   label width, roomier on desktop where horizontal space is plentiful. */
+:root { --tree-indent: 12px; }
+@media (min-width: 768px) {
+  :root { --tree-indent: 24px; }
+}

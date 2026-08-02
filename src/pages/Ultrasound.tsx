@@ -690,16 +690,19 @@ export default function Ultrasound() {
               return (
                 <div key={g.id} className={`rounded-xl border border-gray-200 border-l-4 overflow-hidden ${cfg.border.replace('border-', 'border-l-')}`}>
                   {/* Equipment header */}
-                  <div className={`flex items-center justify-between px-4 py-3 ${cfg.bg}`}>
-                    <div className="flex items-center gap-3">
-                      <p className="text-sm font-bold text-gray-900 font-mono">{g.tag}</p>
-                      <span className="text-xs text-gray-400">{g.line}</span>
-                      <span className="text-xs text-gray-300">·</span>
-                      <span className="text-xs text-gray-400 max-w-[200px] truncate">{g.section}</span>
+                  {/* Header stacks on a phone — tag + line + section + count + badge
+                      never fit one 338px row. */}
+                  <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1.5 sm:gap-3 px-4 py-3 ${cfg.bg}`}>
+                    <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+                      <p className="text-sm font-bold text-gray-900 font-mono shrink-0">{g.tag}</p>
+                      <span className="text-xs text-gray-400 truncate">{g.line}</span>
+                      <span className="text-xs text-gray-300 hidden sm:inline">·</span>
+                      <span className="text-xs text-gray-400 max-w-[200px] truncate hidden sm:inline">{g.section}</span>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs text-gray-400">{g.points.length} point{g.points.length !== 1 ? 's' : ''}</span>
-                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full ${cfg.badge}`}>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span className="text-xs text-gray-400 truncate sm:hidden">{g.section}</span>
+                      <span className="text-xs text-gray-400 shrink-0 ml-auto sm:ml-0">{g.points.length} point{g.points.length !== 1 ? 's' : ''}</span>
+                      <span className={`text-xs font-bold px-2.5 py-0.5 rounded-full shrink-0 ${cfg.badge}`}>
                         {g.worstAlarm}
                       </span>
                     </div>

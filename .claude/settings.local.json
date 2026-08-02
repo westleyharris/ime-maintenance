@@ -64,7 +64,11 @@
       "Bash(curl -s --max-time 15 https://ime-maintenance-theta.vercel.app/)",
       "mcp__849c9b65-ff37-4e53-8154-490e5db68428__search_docs",
       "Bash(python3 - /Users/westleyharris/.claude/projects/-Users-westleyharris-Desktop-Projects-IME-Maintenance-Dashboard/82bf7598-1658-4609-83b7-acdeab884fc0/tool-results/mcp-849c9b65-ff37-4e53-8154-490e5db68428-search_docs-1785448908453.txt)",
-      "Bash(python3 -c \"import json;print\\(json.dumps\\(open\\('supabase/functions/invite-user/index.ts'\\).read\\(\\)\\)\\)\")"
+      "Bash(python3 -c \"import json;print\\(json.dumps\\(open\\('supabase/functions/invite-user/index.ts'\\).read\\(\\)\\)\\)\")",
+      "Bash(python3 -c 'import sys,json;d=json.load\\(sys.stdin\\);print\\(\"id:\",d.get\\(\"id\"\\),\"err:\",d.get\\(\"msg\",\"\"\\)\\)')",
+      "Bash(node -e \"console.log\\('installed:', require\\('./node_modules/recharts/package.json'\\).version\\)\")",
+      "Bash(node -e \"console.log\\('tailwind:', require\\('./node_modules/tailwindcss/package.json'\\).version\\)\")",
+      "Bash(curl -s -o /dev/null -w 'delete temp UI user -> %{http_code}\\\\n' -X DELETE https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/admin/users/7b0ddab2-1699-4da6-bab9-fed13241394c -H 'apikey: __TRACKED_VAR__' -H 'Authorization: Bearer __TRACKED_VAR__')"
     ]
   }
 }

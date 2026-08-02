@@ -4,7 +4,7 @@ import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/fetchAll';
 import { AssetHealthModal } from '../components/EquipmentDetail';
-import { PieChart, Pie, Cell, Tooltip } from 'recharts';
+import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -463,13 +463,15 @@ export default function Dashboard() {
       <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
 
-        <div className="flex items-center gap-2 ml-auto flex-wrap">
+        {/* On a phone this becomes its own full-width block: a stretched segmented
+            control on one row, then the two date badges sharing the next row. */}
+        <div className="flex items-center gap-2 w-full sm:w-auto sm:ml-auto flex-wrap">
 
           {/* View mode toggle */}
-          <div className="flex items-center bg-gray-100 rounded-lg p-0.5">
+          <div className="flex items-center bg-gray-100 rounded-lg p-0.5 w-full sm:w-auto">
             <button
               onClick={() => setViewMode('points')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-md text-xs font-semibold transition-all flex-1 sm:flex-none ${
                 viewMode === 'points'
                   ? 'bg-white text-primary shadow-sm'
                   : 'text-gray-500 hover:text-gray-700'
@@ -480,7 +482,7 @@ export default function Dashboard() {
             </button>
             <button
               onClick={() => setViewMode('equipment')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
+              className={`flex items-center justify-center gap-1.5 px-3 py-2 sm:py-1.5 rounded-md text-xs font-semibold transition-all flex-1 sm:flex-none ${
                 viewMode === 'equipment'
                   ? 'bg-white text-primary shadow-sm'
                   : 'text-gray-500 hover:text-gray-700'
@@ -492,29 +494,29 @@ export default function Dashboard() {
           </div>
 
           {/* Last Reading badge */}
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm">
+          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 shadow-sm flex-1 sm:flex-none min-w-0">
             <Calendar size={13} className="text-gray-400 shrink-0" />
-            <div className="leading-none">
+            <div className="leading-none min-w-0">
               <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Last Reading</p>
-              <p className="text-xs font-bold text-gray-800 mt-0.5">
+              <p className="text-xs font-bold text-gray-800 mt-0.5 truncate">
                 {loading ? '…' : lastReading ? formatDate(lastReading) : '—'}
               </p>
             </div>
           </div>
 
           {/* Next Visit badge */}
-          <div className="relative" ref={pickerRef}>
+          <div className="relative flex-1 sm:flex-none min-w-0" ref={pickerRef}>
             <button
               onClick={() => selectedLocationId && setShowPicker(p => !p)}
               title={selectedLocationId ? 'Set next visit date' : 'Select a location first'}
-              className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-2 shadow-sm transition-colors
+              className={`flex items-center gap-2 bg-white border rounded-lg px-3 py-2 shadow-sm transition-colors w-full
                 ${showPicker ? 'border-primary/50 ring-2 ring-primary/20' : 'border-gray-200'}
                 ${selectedLocationId ? 'hover:border-gray-300 cursor-pointer' : 'opacity-50 cursor-not-allowed'}`}
             >
               <Calendar size={13} className={nextVisit ? 'text-primary shrink-0' : 'text-gray-400 shrink-0'} />
-              <div className="leading-none text-left">
+              <div className="leading-none text-left min-w-0">
                 <p className="text-[9px] font-bold uppercase tracking-widest text-gray-400">Next Visit</p>
-                <p className={`text-xs font-bold mt-0.5 ${nextVisit ? 'text-primary' : 'text-gray-400'}`}>
+                <p className={`text-xs font-bold mt-0.5 truncate ${nextVisit ? 'text-primary' : 'text-gray-400'}`}>
                   {savingVisit ? 'Saving…' : nextVisit ? formatDate(nextVisit) : 'Not set'}
                 </p>
               </div>
@@ -545,7 +547,7 @@ export default function Dashboard() {
           {/* Refresh */}
           <button
             onClick={() => fetchData()}
-            className="p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors bg-white shadow-sm"
+            className="p-2.5 sm:p-2 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors bg-white shadow-sm shrink-0"
             title="Refresh"
           >
             {loading ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
@@ -589,20 +591,25 @@ export default function Dashboard() {
               {!hasData ? (
                 <div className="flex items-center justify-center h-48 text-gray-300 text-sm">No data yet</div>
               ) : (
-                <div className="flex items-center gap-4">
-                  <div className="shrink-0">
-                    <PieChart width={280} height={280}>
-                      <Pie data={pieData} cx="50%" cy="50%" outerRadius={132} dataKey="value" paddingAngle={2}>
-                        {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
-                      </Pie>
-                      <Tooltip
-                        formatter={(v) => [`${v} ${viewMode === 'points' ? 'points' : 'equipment'}`]}
-                        contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
-                      />
-                    </PieChart>
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                  {/* Chart scales with the column instead of a fixed 280px, which
+                      used to squeeze the legend down to ~47px on a phone. */}
+                  <div className="w-full max-w-[280px] sm:shrink-0">
+                    <ResponsiveContainer width="100%" height={240}>
+                      <PieChart>
+                        {/* numeric radius — a percentage string renders empty sectors in this recharts version */}
+                        <Pie data={pieData} cx="50%" cy="50%" outerRadius={110} dataKey="value" paddingAngle={2} isAnimationActive={false}>
+                          {pieData.map(e => <Cell key={e.name} fill={e.color} />)}
+                        </Pie>
+                        <Tooltip
+                          formatter={(v) => [`${v} ${viewMode === 'points' ? 'points' : 'equipment'}`]}
+                          contentStyle={{ fontSize: 11, borderRadius: 8, border: '1px solid #e2e8f0' }}
+                        />
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
 
-                  <div className="flex-1 space-y-3 min-w-0">
+                  <div className="w-full sm:flex-1 space-y-3 min-w-0">
                     {(['Danger', 'Warning', 'Alert', 'Normal'] as const).map(l => (
                       <div key={l} className="flex items-center gap-2 min-w-0">
                         <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${ALARM[l].dot}`} />

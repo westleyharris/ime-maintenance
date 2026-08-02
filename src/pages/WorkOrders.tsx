@@ -242,39 +242,102 @@ export default function WorkOrders() {
         </span>
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
+      {/* Filters — search full width on a phone, the rest share rows */}
+      <div className="flex items-center gap-2 sm:gap-3 mb-4 flex-wrap">
         <input
           type="text" value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search WO #, title, asset…"
-          className="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20"
+          className="w-full sm:flex-1 sm:min-w-[200px] px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white outline-none focus:ring-2 focus:ring-primary/20"
         />
         <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          className="flex-1 min-w-0 sm:flex-none px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
           <option value="">All statuses</option>
           <option value="open">To Be Scheduled</option><option value="in_progress">In Progress</option>
           <option value="closed">Closed</option><option value="cancelled">Cancelled</option>
         </select>
         <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
+          className="flex-1 min-w-0 sm:flex-none px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600">
           <option value="">All priorities</option>
           <option value="low">Low</option><option value="medium">Medium</option>
           <option value="high">High</option><option value="critical">Critical</option>
         </select>
-        <span className="text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
+        <span className="hidden sm:inline text-xs text-gray-500 px-3 py-2 border border-gray-200 rounded-lg bg-white">
           <strong className="text-gray-800">{visible.length}</strong> work orders
         </span>
         <button
           onClick={handleExport}
           disabled={visible.length === 0}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex-1 min-w-0 sm:flex-none justify-center flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white text-gray-600 hover:bg-gray-50 hover:text-gray-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           title="Export the current list to Excel"
         >
           <Download size={14} /> Export
         </button>
       </div>
 
-      <div className="overflow-x-auto border border-gray-100 rounded-2xl bg-white shadow-sm">
+      {/* Mobile: stacked cards — the 11-column table needs ~4x a phone's width. */}
+      <div className="md:hidden space-y-2">
+        {loading ? (
+          <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-gray-300" /></div>
+        ) : visible.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-gray-400 gap-2 bg-white border border-gray-100 rounded-2xl">
+            <ClipboardList size={26} className="opacity-30" />
+            <p className="text-sm">No work orders yet</p>
+            <p className="text-xs">Create one from a finding in the Findings tab.</p>
+          </div>
+        ) : visible.map(w => (
+          <div
+            key={w.id}
+            onClick={() => setDetailWO(w)}
+            className="bg-white border border-gray-100 rounded-2xl shadow-sm p-3.5 active:bg-blue-50/40 transition-colors"
+          >
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-mono text-sm font-bold text-primary">{w.woNumber}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${PRIORITY_BADGE[w.priority]}`}>{w.priority}</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${STATUS_BADGE[w.status]}`}>{STATUS_LABEL[w.status]}</span>
+            </div>
+
+            <p className="font-mono text-sm font-semibold text-gray-800 mt-2 truncate">{w.equipment}</p>
+            <p className="text-xs text-gray-400 truncate">{w.line}</p>
+            {w.title && <p className="text-xs text-gray-600 mt-1.5 line-clamp-2">{w.title}</p>}
+
+            <div className="flex items-center gap-x-3 gap-y-1 mt-2.5 flex-wrap text-[11px] text-gray-400">
+              {w.cmmsWoNo && <span className="font-mono text-gray-600">CMMS {w.cmmsWoNo}</span>}
+              {w.assignee && <span>{w.assignee}</span>}
+              {w.dueDate && <span>Due {fmtDate(w.dueDate)}</span>}
+              <span>Created {fmtDate(w.createdAt)}</span>
+            </div>
+
+            {w.status === 'closed' && w.closeNote && (
+              <p className="text-[11px] text-gray-500 mt-2 rounded-lg bg-green-50 border border-green-100 px-2.5 py-1.5 line-clamp-2">
+                {w.closeNote}
+              </p>
+            )}
+
+            {canManage && (
+              <div className="flex items-center gap-2 mt-3 pt-3 border-t border-gray-50" onClick={e => e.stopPropagation()}>
+                <select
+                  value={w.status}
+                  onChange={e => updateStatus(w.id, e.target.value as WOStatus)}
+                  className="flex-1 min-w-0 px-2 py-2 rounded-lg border border-gray-200 text-xs font-semibold bg-white text-gray-700"
+                >
+                  <option value="open">To Be Scheduled</option><option value="in_progress">In Progress</option>
+                  <option value="closed">Closed</option><option value="cancelled">Cancelled</option>
+                </select>
+                <button
+                  onClick={() => remove(w.id, w.findingId)}
+                  className="p-2.5 rounded-lg border border-gray-200 text-gray-400 active:text-red-500 shrink-0"
+                  title="Delete work order"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block overflow-x-auto border border-gray-100 rounded-2xl bg-white shadow-sm">
         {loading ? (
           <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-gray-300" /></div>
         ) : visible.length === 0 ? (

@@ -179,54 +179,56 @@ export default function Header() {
         </div>
       </div>
 
-      {/* ── Mobile scope row ──────────────────────────────────────── */}
+      {/* ── Mobile scope row ──────────────────────────────────────────
+           Grid of tappable pills rather than one horizontally-scrolling strip —
+           three dropdowns never fit a phone width and the scrollbar read as a bug. */}
       {profile && (
-        <div className="md:hidden flex items-center gap-2 px-4 py-2 bg-gray-50 border-t border-gray-100 overflow-x-auto">
-          <Building2 size={13} className="text-gray-400 shrink-0" />
-          {isImeAdmin ? (
-            <select value={selectedCompanyId ?? ''} onChange={e => setCompany(e.target.value || null)}
-              className="text-xs font-semibold text-gray-700 bg-transparent border-none outline-none max-w-[130px]">
-              <option value="">Select company…</option>
-              {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          ) : (
-            <span className="text-xs font-semibold text-gray-700 truncate max-w-[130px]">
-              {selectedCompany?.name ?? '…'}
-            </span>
-          )}
+        <div className="md:hidden grid grid-cols-2 gap-2 px-4 py-2 bg-gray-50 border-t border-gray-100">
+          <label className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-2 min-w-0">
+            <Building2 size={13} className="text-gray-400 shrink-0" />
+            {isImeAdmin ? (
+              <select value={selectedCompanyId ?? ''} onChange={e => setCompany(e.target.value || null)}
+                className="w-full min-w-0 text-xs font-semibold text-gray-700 bg-transparent border-none outline-none">
+                <option value="">Company…</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            ) : (
+              <span className="text-xs font-semibold text-gray-700 truncate">
+                {selectedCompany?.name ?? '…'}
+              </span>
+            )}
+          </label>
 
           {selectedCompanyId && (
-            <>
-              <ChevronRight size={12} className="text-gray-300 shrink-0" />
+            <label className="flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-2 min-w-0">
               <MapPin size={12} className="text-gray-400 shrink-0" />
               {canChangeLocation ? (
                 <select value={selectedLocationId ?? ''} onChange={e => setLocation(e.target.value || null)}
-                  className="text-xs text-gray-600 bg-transparent border-none outline-none max-w-[140px]">
+                  className="w-full min-w-0 text-xs text-gray-600 bg-transparent border-none outline-none">
                   <option value="">All locations</option>
                   {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                 </select>
               ) : (
-                <span className="text-xs text-gray-600 truncate max-w-[140px]">
+                <span className="text-xs text-gray-600 truncate">
                   {selectedLocation?.name ?? 'All locations'}
                 </span>
               )}
-            </>
+            </label>
           )}
 
-          {/* Mobile line filter — dashboard only */}
+          {/* Mobile line filter — dashboard only; full width on its own row */}
           {showLineFilter && (
-            <>
-              <ChevronRight size={12} className="text-gray-300 shrink-0" />
+            <label className="col-span-2 flex items-center gap-1.5 bg-white border border-gray-200 rounded-lg px-2.5 py-2 min-w-0">
               <GitBranch size={12} className="text-gray-400 shrink-0" />
               <select
                 value={selectedLineId ?? ''}
                 onChange={e => setLine(e.target.value || null)}
-                className="text-xs text-gray-600 bg-transparent border-none outline-none max-w-[140px]"
+                className="w-full min-w-0 text-xs text-gray-600 bg-transparent border-none outline-none"
               >
                 <option value="">All lines</option>
                 {lines.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
-            </>
+            </label>
           )}
         </div>
       )}
