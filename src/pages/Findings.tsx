@@ -193,8 +193,21 @@ export default function Findings() {
       a.line.localeCompare(b.line)
     );
 
-  const dangerCount = rows.filter(r => r.condition === 'Danger').length;
-  const warningCount = rows.filter(r => r.condition === 'Warning').length;
+  // Header badges follow the area/status/search filters so they agree with the
+  // list, but ignore the condition filter — otherwise picking "Danger" would
+  // show "0 Warning" and read as if the warnings had disappeared.
+  const scopedForCounts = rows.filter(r => {
+    if (filterStatus && r.status !== filterStatus) return false;
+    if (filterLine && r.line !== filterLine) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!(`${r.equipment} ${r.generatedTag ?? ''} ${r.line} ${r.section}`
+        .toLowerCase().includes(q))) return false;
+    }
+    return true;
+  });
+  const dangerCount = scopedForCounts.filter(r => r.condition === 'Danger').length;
+  const warningCount = scopedForCounts.filter(r => r.condition === 'Warning').length;
 
   // Export exactly what the table currently shows (filters + sort applied)
   const handleExport = () => exportToExcel(

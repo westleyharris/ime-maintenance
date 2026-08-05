@@ -552,8 +552,8 @@ export default function Ultrasound() {
   const lines    = [...new Set(rows.filter(r => !filterSection || r.section === filterSection).map(r => r.line))].sort();
   const sections = [...new Set(rows.filter(r => !filterLine    || r.line    === filterLine).map(r => r.section))].sort();
 
-  const filtered = rows.filter(r => {
-    if (filterAlarm   && r.alarmLevel !== filterAlarm)   return false;
+  // Line / system / search scope — everything except the alarm filter.
+  const scoped = rows.filter(r => {
     if (filterLine    && r.line       !== filterLine)    return false;
     if (filterSection && r.section    !== filterSection) return false;
     if (search) {
@@ -563,13 +563,18 @@ export default function Ultrasound() {
     return true;
   });
 
+  const filtered = scoped.filter(r => !filterAlarm || r.alarmLevel === filterAlarm);
+
   const groups = groupByEquipment(filtered);
 
+  // Counts follow the line/system/search scope so they match the list below, but
+  // deliberately ignore the alarm filter — these cards ARE the alarm filter, and
+  // folding it in would zero the other three and strand the user on one level.
   const counts = {
-    Danger:  rows.filter(r => r.alarmLevel === 'Danger').length,
-    Warning: rows.filter(r => r.alarmLevel === 'Warning').length,
-    Alert:   rows.filter(r => r.alarmLevel === 'Alert').length,
-    Normal:  rows.filter(r => r.alarmLevel === 'Normal').length,
+    Danger:  scoped.filter(r => r.alarmLevel === 'Danger').length,
+    Warning: scoped.filter(r => r.alarmLevel === 'Warning').length,
+    Alert:   scoped.filter(r => r.alarmLevel === 'Alert').length,
+    Normal:  scoped.filter(r => r.alarmLevel === 'Normal').length,
   };
 
   // ── Render ──────────────────────────────────────────────────────────────────
