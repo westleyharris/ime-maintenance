@@ -120,11 +120,23 @@ function AssetTreeNode({
 
 // ── Supabase shape ────────────────────────────────────────────────────────────
 
-interface DBPoint     { id: string; name: string; sensor_model: string | null; }
-interface DBComponent { id: string; name: string; measurement_points: DBPoint[]; }
-interface DBEquipment { id: string; tag: string; components: DBComponent[]; }
-interface DBSection   { id: string; uas_name: string; equipment: DBEquipment[]; }
-interface DBLine      { id: string; name: string; sections: DBSection[]; }
+interface DBPoint     { id: string; name: string; sensor_model: string | null; uas_order: number | null; }
+interface DBComponent { id: string; name: string; uas_order: number | null; measurement_points: DBPoint[]; }
+interface DBEquipment { id: string; tag: string; uas_order: number | null; components: DBComponent[]; }
+interface DBSection   { id: string; uas_name: string; uas_order: number | null; equipment: DBEquipment[]; }
+interface DBLine      { id: string; name: string; uas_order: number | null; sections: DBSection[]; }
+
+// UAS3 orders siblings by process flow (Depalletizer → Airveyor → Filler → …),
+// not alphabetically. Mirror that; fall back to name when order is missing.
+function byUasOrder<T extends { uas_order: number | null }>(label: (x: T) => string) {
+  return (a: T, b: T) => {
+    const ao = a.uas_order, bo = b.uas_order;
+    if (ao != null && bo != null && ao !== bo) return ao - bo;
+    if (ao != null && bo == null) return -1;
+    if (ao == null && bo != null) return 1;
+    return label(a).localeCompare(label(b));
+  };
+}
 
 function buildTree(
   locationId: string,
@@ -139,35 +151,35 @@ function buildTree(
     status: 'good',
     companyId,
     locationId,
-    children: lines.map(line => ({
+    children: [...lines].sort(byUasOrder<DBLine>(l => l.name)).map(line => ({
       id: line.id,
       name: line.name,
       type: 'plant',
       status: 'good',
       companyId,
       locationId,
-      children: line.sections.map(sec => ({
+      children: [...(line.sections ?? [])].sort(byUasOrder<DBSection>(s => s.uas_name)).map(sec => ({
         id: sec.id,
         name: sec.uas_name,
         type: 'system',
         status: 'good',
         companyId,
         locationId,
-        children: sec.equipment.map(eq => ({
+        children: [...(sec.equipment ?? [])].sort(byUasOrder<DBEquipment>(e => e.tag)).map(eq => ({
           id: eq.id,
           name: eq.tag,
           type: 'equipment',
           status: 'good',
           companyId,
           locationId,
-          children: eq.components.map(comp => ({
+          children: [...(eq.components ?? [])].sort(byUasOrder<DBComponent>(c => c.name)).map(comp => ({
             id: comp.id,
             name: comp.name,
             type: 'component',
             status: 'good',
             companyId,
             locationId,
-            children: (comp.measurement_points ?? []).map(pt => ({
+            children: [...(comp.measurement_points ?? [])].sort(byUasOrder<DBPoint>(p => p.name)).map(pt => ({
               id: pt.id,
               name: pt.sensor_model ? `${pt.name} · ${pt.sensor_model}` : pt.name,
               type: 'point',
@@ -234,20 +246,21 @@ export default function Assets() {
     const { data, error } = await supabase
       .from('lines')
       .select(`
-        id, name,
+        id, name, uas_order,
         sections (
-          id, uas_name,
+          id, uas_name, uas_order,
           equipment (
-            id, tag,
+            id, tag, uas_order,
             components (
-              id, name,
-              measurement_points ( id, name, sensor_model )
+              id, name, uas_order,
+              measurement_points ( id, name, sensor_model, uas_order )
             )
           )
         )
       `)
       .eq('location_id', selectedLocationId)
       .eq('company_id', selectedCompanyId)
+      .order('uas_order', { nullsFirst: false })
       .order('name');
 
     if (!error && data && data.length > 0 && selectedLocation) {

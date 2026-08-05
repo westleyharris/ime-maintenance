@@ -68,7 +68,18 @@
       "Bash(python3 -c 'import sys,json;d=json.load\\(sys.stdin\\);print\\(\"id:\",d.get\\(\"id\"\\),\"err:\",d.get\\(\"msg\",\"\"\\)\\)')",
       "Bash(node -e \"console.log\\('installed:', require\\('./node_modules/recharts/package.json'\\).version\\)\")",
       "Bash(node -e \"console.log\\('tailwind:', require\\('./node_modules/tailwindcss/package.json'\\).version\\)\")",
-      "Bash(curl -s -o /dev/null -w 'delete temp UI user -> %{http_code}\\\\n' -X DELETE https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/admin/users/7b0ddab2-1699-4da6-bab9-fed13241394c -H 'apikey: __TRACKED_VAR__' -H 'Authorization: Bearer __TRACKED_VAR__')"
+      "Bash(curl -s -o /dev/null -w 'delete temp UI user -> %{http_code}\\\\n' -X DELETE https://gszfyelaezdftlwtzrjw.supabase.co/auth/v1/admin/users/7b0ddab2-1699-4da6-bab9-fed13241394c -H 'apikey: __TRACKED_VAR__' -H 'Authorization: Bearer __TRACKED_VAR__')",
+      "Bash(dig +short portal-ime-us.com A)",
+      "Bash(dig +short www.portal-ime-us.com A)",
+      "Bash(dig +short ime-us.com A)",
+      "Bash(dig +short ime-us.com MX)",
+      "Bash(whois portal-ime-us.com)",
+      "Bash(whois ime-us.com)",
+      "Bash(curl -sS -o /dev/null -w \"http=%{http_code} tls=%{ssl_verify_result} ver=%{http_version} ip=%{remote_ip}\\\\n\" --max-time 20 https://www.portal-ime-us.com/)",
+      "Bash(curl -sS -o /dev/null -v --max-time 20 https://www.portal-ime-us.com/)",
+      "Bash(dig +short gszfyelaezdftlwtzrjw.supabase.co)",
+      "Bash(curl -s 'https://gszfyelaezdftlwtzrjw.supabase.co/rest/v1/lines?select=id,name,uas_order,sections\\(id,uas_name,uas_order,equipment\\(id,tag,uas_order,components\\(id,name,uas_order,measurement_points\\(id,name,uas_order\\)\\)\\)\\)&limit=1&order=uas_order.asc.nullslast' -H 'apikey: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10' -H 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdzemZ5ZWxhZXpkZnRsd3R6cmp3Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3ODEwNDM0MiwiZXhwIjoyMDkzNjgwMzQyfQ.VtiEsBc2UuSjc5KrfffDcmAxSX1rSExiVQlGrxaeK10')",
+      "Bash(grep -n \"AsInt\\\\|function NI\\\\|\\\\bNI \\\\$\" scripts/sync-uas3.ps1)"
     ]
   }
 }
