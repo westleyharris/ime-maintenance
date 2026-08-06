@@ -639,12 +639,131 @@ function AssetHealthTab({ components, notes, info }: {
 
 // ── Work Orders tab ───────────────────────────────────────────────────────────
 
-function WorkOrdersTab() {
+interface AssetWorkOrder {
+  id: string;
+  wo_number: string;
+  cmms_wo_no: string | null;
+  title: string | null;
+  recommendation: string | null;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'in_progress' | 'closed' | 'cancelled';
+  assignee: string | null;
+  sap_no: string | null;
+  close_note: string | null;
+  due_date: string | null;
+  created_at: string;
+}
+
+const WO_PRIORITY_BADGE: Record<string, string> = {
+  low: 'bg-blue-100 text-blue-700',
+  medium: 'bg-yellow-100 text-yellow-700',
+  high: 'bg-orange-100 text-orange-700',
+  critical: 'bg-red-100 text-red-700',
+};
+const WO_STATUS_BADGE: Record<string, string> = {
+  open: 'bg-blue-50 text-blue-700',
+  in_progress: 'bg-purple-50 text-purple-700',
+  closed: 'bg-green-50 text-green-700',
+  cancelled: 'bg-gray-100 text-gray-600',
+};
+const WO_STATUS_LABEL: Record<string, string> = {
+  open: 'To Be Scheduled', in_progress: 'In Progress', closed: 'Closed', cancelled: 'Cancelled',
+};
+
+function WorkOrderCard({ wo, past }: { wo: AssetWorkOrder; past: boolean }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-16 text-gray-400">
-      <ClipboardList size={32} className="opacity-30 mb-3" />
-      <p className="text-sm font-medium">No work orders</p>
-      <p className="text-xs mt-1 text-gray-300">Work order data will be connected here</p>
+    <div className={`bg-white rounded-xl border p-4 transition-opacity ${past ? 'border-gray-200 opacity-60' : 'border-gray-200'}`}>
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`font-mono text-sm font-bold ${past ? 'text-gray-500' : 'text-primary'}`}>{wo.wo_number}</span>
+        {wo.cmms_wo_no && <span className="font-mono text-xs text-gray-400">CMMS {wo.cmms_wo_no}</span>}
+        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${WO_PRIORITY_BADGE[wo.priority] ?? 'bg-gray-100 text-gray-600'}`}>
+          {wo.priority}
+        </span>
+        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${WO_STATUS_BADGE[wo.status] ?? 'bg-gray-100 text-gray-600'}`}>
+          {WO_STATUS_LABEL[wo.status] ?? wo.status}
+        </span>
+        <span className="ml-auto text-[11px] text-gray-400">{fmtDate(wo.created_at)}</span>
+      </div>
+
+      {wo.title && <p className="text-sm font-semibold text-gray-800 mt-2">{wo.title}</p>}
+
+      {wo.recommendation && (
+        <p className="text-xs text-gray-600 mt-1.5 whitespace-pre-wrap">{wo.recommendation}</p>
+      )}
+
+      <div className="flex items-center gap-x-4 gap-y-1 mt-2.5 flex-wrap text-[11px] text-gray-400">
+        {wo.assignee && <span>Assignee: <span className="text-gray-600">{wo.assignee}</span></span>}
+        {wo.sap_no && <span>SAP: <span className="text-gray-600">{wo.sap_no}</span></span>}
+        {wo.due_date && <span>Due: <span className="text-gray-600">{fmtDate(wo.due_date)}</span></span>}
+      </div>
+
+      {wo.status === 'closed' && wo.close_note && (
+        <p className="text-xs text-gray-600 mt-2.5 rounded-lg bg-green-50 border border-green-100 px-3 py-2">
+          <span className="font-semibold text-gray-500">Closed: </span>{wo.close_note}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function WorkOrdersTab({ equipmentId }: { equipmentId: string }) {
+  const [wos, setWos] = useState<AssetWorkOrder[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from('work_orders')
+      .select('id, wo_number, cmms_wo_no, title, recommendation, priority, status, assignee, sap_no, close_note, due_date, created_at')
+      .eq('equipment_id', equipmentId)
+      .order('created_at', { ascending: false })
+      .then(({ data }) => { if (!cancelled) setWos((data ?? []) as AssetWorkOrder[]); });
+    return () => { cancelled = true; };
+  }, [equipmentId]);
+
+  if (wos === null) {
+    return <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-gray-300" /></div>;
+  }
+
+  if (wos.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 flex flex-col items-center justify-center py-16 text-gray-400">
+        <ClipboardList size={32} className="opacity-30 mb-3" />
+        <p className="text-sm font-medium">No work orders</p>
+        <p className="text-xs mt-1 text-gray-300">Create one from this asset's finding in the Findings tab</p>
+      </div>
+    );
+  }
+
+  const active = wos.filter(w => w.status === 'open' || w.status === 'in_progress');
+  const past   = wos.filter(w => w.status === 'closed' || w.status === 'cancelled');
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">
+          Active {active.length > 0 && <span className="text-gray-400 font-semibold">· {active.length}</span>}
+        </p>
+        {active.length === 0 ? (
+          <p className="text-sm text-gray-400 bg-white rounded-xl border border-gray-200 px-4 py-5">
+            No active work order on this asset.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {active.map(w => <WorkOrderCard key={w.id} wo={w} past={false} />)}
+          </div>
+        )}
+      </div>
+
+      {past.length > 0 && (
+        <div>
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">
+            History <span className="text-gray-300 font-semibold">· {past.length}</span>
+          </p>
+          <div className="space-y-2">
+            {past.map(w => <WorkOrderCard key={w.id} wo={w} past />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1610,7 +1729,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
           {activeTab === 'asset-health' && (
             <AssetHealthTab components={components} notes={notes} info={info} />
           )}
-          {activeTab === 'workorders'   && <WorkOrdersTab />}
+          {activeTab === 'workorders'   && <WorkOrdersTab equipmentId={equipmentId} />}
           {activeTab === 'kpis' && (
             <KPIsTab components={components} status={info?.status ?? null} lastReplacedAt={info?.last_replaced_at ?? null} equipmentId={equipmentId} />
           )}
