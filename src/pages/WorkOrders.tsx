@@ -19,6 +19,7 @@ interface WORow {
   sapNo: string | null;
   cmmsWoNo: string | null;
   closeNote: string | null;
+  recommendation: string | null;
   dueDate: string | null;
   createdAt: string;
   findingId: string | null;
@@ -38,6 +39,7 @@ interface RawWO {
   sap_no: string | null;
   cmms_wo_no: string | null;
   close_note: string | null;
+  recommendation: string | null;
   due_date: string | null;
   created_at: string;
   finding_id: string | null;
@@ -123,7 +125,7 @@ export default function WorkOrders() {
     let q = supabase
       .from('work_orders')
       .select(`
-        id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, close_note, due_date, created_at, finding_id,
+        id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, close_note, recommendation, due_date, created_at, finding_id,
         equipment ( tag, sections ( lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId)
@@ -134,9 +136,10 @@ export default function WorkOrders() {
     // finding condition (separate fetch avoids the dual-FK ambiguity)
     const { data: fs } = await supabase
       .from('findings')
-      .select('id, condition')
+      .select('id, condition, recommendation')
       .eq('company_id', selectedCompanyId);
-    const fMap = new Map(((fs ?? []) as { id: string; condition: string }[]).map(f => [f.id, f.condition]));
+    const fMap = new Map(((fs ?? []) as { id: string; condition: string; recommendation: string | null }[])
+      .map(f => [f.id, f] as const));
 
     const flat: WORow[] = ((data ?? []) as unknown as RawWO[]).map(w => ({
       id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
@@ -144,7 +147,9 @@ export default function WorkOrders() {
       cmmsWoNo: w.cmms_wo_no, closeNote: w.close_note, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
       equipment: w.equipment?.tag ?? '—',
       line: w.equipment?.sections?.lines?.name ?? '—',
-      findingCondition: w.finding_id ? (fMap.get(w.finding_id) ?? null) : null,
+      findingCondition: w.finding_id ? (fMap.get(w.finding_id)?.condition ?? null) : null,
+      // prefer the snapshot; fall back to the live finding for older rows
+      recommendation: w.recommendation ?? (w.finding_id ? (fMap.get(w.finding_id)?.recommendation ?? null) : null),
     }));
     setRows(flat);
     setLoading(false);
@@ -481,12 +486,14 @@ function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
             ))}
           </dl>
 
-          {wo.description && (
-            <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Description</p>
-              <p className="text-sm text-gray-700 whitespace-pre-wrap rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">{wo.description}</p>
-            </div>
-          )}
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Recommendation</p>
+            {wo.recommendation ? (
+              <p className="text-sm text-gray-700 whitespace-pre-wrap rounded-lg bg-gray-50 border border-gray-100 px-3 py-2">{wo.recommendation}</p>
+            ) : (
+              <p className="text-sm text-gray-300 italic">No recommendation recorded</p>
+            )}
+          </div>
 
           {wo.status === 'closed' && wo.closeNote && (
             <div>

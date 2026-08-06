@@ -623,6 +623,9 @@ function FindingModal({
       sap_no: woSap || null,
       due_date: woDue || null,
       created_by: userId,
+      // Snapshot of the analyst's recommendation — shown on the WO detail popup.
+      // Copied here so it survives the finding being reconciled away later.
+      recommendation: recommendation.trim() || null,
       // KPI: mean time from notification email → WO creation. Copied here so
       // it survives the finding later being deleted by reconcile_findings().
       finding_notified_at: finding.notifiedAt,
