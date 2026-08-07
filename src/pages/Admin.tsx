@@ -8,6 +8,16 @@ interface Company  { id: string; name: string; industry: string | null; country:
 interface Location { id: string; name: string; company_id: string; }
 interface UserRow  { id: string; email: string; full_name: string | null; role: UserRole; company_id: string | null; location_id: string | null; }
 
+// From auth.users (admin_user_status RPC). last_sign_in_at is the reliable
+// "they accepted the invite and set a password" signal — encrypted_password is
+// populated by Supabase even for users who never set one.
+interface AuthStatus { id: string; invited_at: string | null; email_confirmed_at: string | null; last_sign_in_at: string | null; }
+
+function fmtWhen(iso: string | null) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
 type ActiveTab = 'companies' | 'users';
 
 const ROLE_LABELS: Record<UserRole, string> = {
@@ -41,6 +51,10 @@ export default function Admin() {
   const [allLocations, setAllLocations] = useState<Location[]>([]);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [deletingUser, setDeletingUser] = useState(false);
+  // invite status per user (from auth.users via the admin_user_status RPC)
+  const [authStatus, setAuthStatus] = useState<Record<string, AuthStatus>>({});
+  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [resendMsg, setResendMsg] = useState<{ id: string; text: string; ok: boolean } | null>(null);
 
   // ── Add Company form ───────────────────────────────────────────────────────
   const [showAddCompany, setShowAddCompany] = useState(false);
@@ -100,12 +114,31 @@ export default function Admin() {
     Promise.all([
       supabase.from('profiles').select('id, email, full_name, role, company_id, location_id').order('full_name'),
       supabase.from('locations').select('id, name, company_id').order('name'),
-    ]).then(([usersRes, locsRes]) => {
+      supabase.rpc('admin_user_status'),
+    ]).then(([usersRes, locsRes, statusRes]) => {
       setUsers(usersRes.data ?? []);
       setAllLocations(locsRes.data ?? []);
+      const map: Record<string, AuthStatus> = {};
+      for (const s of ((statusRes.data ?? []) as AuthStatus[])) map[s.id] = s;
+      setAuthStatus(map);
       setLoadingUsers(false);
     });
   }, [activeTab]);
+
+  // ── Resend an invite ───────────────────────────────────────────────────────
+  const resendInvite = async (id: string) => {
+    setResendingId(id); setResendMsg(null);
+    const { data, error } = await supabase.functions.invoke('resend-invite', { body: { user_id: id } });
+    const failed = error || (data as { error?: string })?.error;
+    setResendMsg({
+      id,
+      ok: !failed,
+      text: failed
+        ? (typeof failed === 'string' ? failed : 'Could not resend the invite. Please try again.')
+        : 'Invite email sent.',
+    });
+    setResendingId(null);
+  };
 
   // ── Create company ─────────────────────────────────────────────────────────
   const handleCreateCompany = async () => {
@@ -465,6 +498,10 @@ export default function Admin() {
                 const isEditing = editingUserId === u.id;
                 const companyName = companies.find(c => c.id === (isEditing ? editCompanyId : u.company_id))?.name;
                 const locName = allLocations.find(l => l.id === (isEditing ? editLocationId : u.location_id))?.name;
+                // Accepted the invite = has signed in at least once (which is what
+                // setting the password does). Anything else is still pending.
+                const st = authStatus[u.id];
+                const accepted = !!st?.last_sign_in_at;
 
                 return (
                   <div key={u.id} className={`rounded-xl border transition-all ${isEditing ? 'border-primary bg-blue-50/40' : 'border-gray-200'}`}>
@@ -475,6 +512,20 @@ export default function Admin() {
                         <p className="text-sm font-semibold text-gray-800 truncate">{u.full_name ?? '—'}</p>
                         <p className="text-xs text-gray-400 truncate">{u.email}</p>
                       </div>
+                      {st && (
+                        <span
+                          title={accepted
+                            ? `Password set · last signed in ${fmtWhen(st.last_sign_in_at)}`
+                            : `Invited ${fmtWhen(st.invited_at)} · has not set a password yet`}
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${
+                            accepted
+                              ? 'bg-green-50 text-green-700 border-green-200'
+                              : 'bg-amber-50 text-amber-700 border-amber-200'
+                          }`}
+                        >
+                          {accepted ? 'Active' : 'Pending invite'}
+                        </span>
+                      )}
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border shrink-0 ${ROLE_BADGE[u.role]}`}>
                         {ROLE_LABELS[u.role]}
                       </span>
@@ -528,6 +579,34 @@ export default function Admin() {
                         )}
 
                         {userError && <p className="text-xs text-red-600">{userError}</p>}
+
+                        {/* Invite status + resend */}
+                        <div className="flex items-center gap-2 flex-wrap rounded-lg bg-white border border-gray-200 px-3 py-2">
+                          {accepted ? (
+                            <p className="text-xs text-gray-500">
+                              <span className="font-semibold text-green-700">Password set.</span>{' '}
+                              Last signed in {fmtWhen(st?.last_sign_in_at ?? null)}.
+                            </p>
+                          ) : (
+                            <>
+                              <p className="text-xs text-gray-500">
+                                <span className="font-semibold text-amber-700">No password set yet.</span>{' '}
+                                Invited {fmtWhen(st?.invited_at ?? null)}.
+                              </p>
+                              <button
+                                onClick={() => resendInvite(u.id)}
+                                disabled={resendingId === u.id}
+                                className="ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/30 text-primary text-xs font-semibold hover:bg-primary/5 disabled:opacity-60 transition-colors"
+                              >
+                                {resendingId === u.id ? <Loader2 size={12} className="animate-spin" /> : <Mail size={12} />}
+                                Resend invite
+                              </button>
+                            </>
+                          )}
+                          {resendMsg?.id === u.id && (
+                            <p className={`text-xs w-full ${resendMsg.ok ? 'text-green-600' : 'text-red-600'}`}>{resendMsg.text}</p>
+                          )}
+                        </div>
 
                         <div className="flex items-center gap-2">
                           <button onClick={saveUser} disabled={savingUser || deletingUser}
