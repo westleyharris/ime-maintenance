@@ -3,6 +3,7 @@ import { Calendar, RefreshCw, Loader2, Building2, ChevronDown, ChevronUp, X, Che
 import { useScope } from '../context/ScopeContext';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/fetchAll';
+import { ALARM_COLUMNS, effectiveAlarm } from '../utils/alarm';
 import { AssetHealthModal } from '../components/EquipmentDetail';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
@@ -10,6 +11,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 
 interface MeasurementRow {
   alarm_level: string;
+  alarm_override: string | null;
   measured_at: string;
   measurement_point_id: string;
   measurement_points: {
@@ -280,7 +282,7 @@ export default function Dashboard() {
       let q = supabase
         .from('measurements')
         .select(`
-          alarm_level, measured_at, measurement_point_id,
+          ${ALARM_COLUMNS}, measured_at, measurement_point_id,
           measurement_points (
             name,
             components (
@@ -304,7 +306,7 @@ export default function Dashboard() {
       const flat = data
         .filter(m => m.measurement_points && !seen.has(m.measurement_point_id) && seen.add(m.measurement_point_id))
         .map(m => ({
-          alarmLevel:      m.alarm_level,
+          alarmLevel:      effectiveAlarm(m),
           measuredAt:      m.measured_at,
           line:            m.measurement_points.components?.equipment?.sections?.lines?.name ?? '—',
           system:          m.measurement_points.components?.equipment?.sections?.uas_name ?? '—',

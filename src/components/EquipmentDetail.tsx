@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
+import { ALARM_COLUMNS, overrideSummary, withEffectiveAlarm, type AlarmOverride } from '../utils/alarm';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -42,7 +43,13 @@ interface Measurement {
   max_rms: number | null;
   peak: number | null;
   crest_factor: number | null;
+  /** Effective level — withEffectiveAlarm() folds any override in at fetch time. */
   alarm_level: string;
+  alarm_override: string | null;
+  override_reason: string | null;
+  overridden_by_name: string | null;
+  overridden_at: string | null;
+  override: AlarmOverride | null;
   measured_at: string;
 }
 
@@ -234,6 +241,7 @@ interface PointDetail {
   alarmLevel: string;
   overallRms: number | null;
   crestFactor: number | null;
+  override: AlarmOverride | null;
 }
 
 interface ComponentDetail {
@@ -288,6 +296,7 @@ function AssetHealthTab({ components, notes, info }: {
         compDetail.points.push({
           pointName: mp.name,
           alarmLevel: m.alarm_level,
+          override:   m.override,
           overallRms: m.overall_rms,
           crestFactor: m.crest_factor,
         });
@@ -481,8 +490,9 @@ function AssetHealthTab({ components, notes, info }: {
                                             {pt.crestFactor != null && (
                                               <span className="text-xs text-gray-600 font-semibold tabular-nums">{pt.crestFactor.toFixed(2)} cf</span>
                                             )}
-                                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${A(pt.alarmLevel).badge}`}>
-                                              {pt.alarmLevel}
+                                            <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full ${A(pt.alarmLevel).badge}`}
+                                              title={pt.override ? overrideSummary(pt.override) : undefined}>
+                                              {pt.alarmLevel}{pt.override && ' *'}
                                             </span>
                                           </div>
                                         </div>
@@ -1565,12 +1575,12 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         const measRes = mpIds.length > 0
           ? await supabase
               .from('measurements')
-              .select('id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measurement_point_id')
+              .select(`id, overall_rms, max_rms, peak, crest_factor, ${ALARM_COLUMNS}, measured_at, measurement_point_id`)
               .in('measurement_point_id', mpIds)
               .order('measured_at', { ascending: false })
           : { data: [] };
 
-        const measData = measRes.data ?? [];
+        const measData = withEffectiveAlarm(measRes.data ?? []);
 
         // Assemble ComponentData[] from flat results
         const assembled: ComponentData[] = comps.map(comp => ({
@@ -1776,11 +1786,11 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
         const mpIds = mps.map(mp => mp.id);
         const measRes = mpIds.length > 0
           ? await supabase.from('measurements')
-              .select('id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measurement_point_id')
+              .select(`id, overall_rms, max_rms, peak, crest_factor, ${ALARM_COLUMNS}, measured_at, measurement_point_id`)
               .in('measurement_point_id', mpIds)
               .order('measured_at', { ascending: false })
           : { data: [] };
-        const measData = measRes.data ?? [];
+        const measData = withEffectiveAlarm(measRes.data ?? []);
 
         const assembled: ComponentData[] = comps.map(comp => ({
           id:   comp.id,

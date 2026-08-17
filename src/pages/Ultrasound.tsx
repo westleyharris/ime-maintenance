@@ -1,9 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, X, TrendingUp } from 'lucide-react';
+import { Waves, Upload, Loader2, CheckCircle, AlertTriangle, RefreshCw, Building2, X, TrendingUp, PenLine, RotateCcw } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
+import { useAuth } from '../context/AuthContext';
 import { importUASData, type ImportResult } from '../utils/uasImporter';
 import { fetchAllRows } from '../lib/fetchAll';
+import {
+  ALARM_COLUMNS, ALARM_LEVELS, effectiveAlarm, overrideOf, overrideSummary,
+  type AlarmOverride,
+} from '../utils/alarm';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
@@ -18,6 +23,10 @@ interface MeasurementRow {
   peak: number | null;
   crest_factor: number | null;
   alarm_level: string;
+  alarm_override: string | null;
+  override_reason: string | null;
+  overridden_by_name: string | null;
+  overridden_at: string | null;
   measured_at: string;
   measurement_points: {
     id: string;
@@ -55,7 +64,9 @@ interface FlatRow {
   maxRms: number | null;
   peak: number | null;
   crestFactor: number | null;
+  /** Effective level — the analyst override when present, else the computed one. */
   alarmLevel: string;
+  override: AlarmOverride | null;
   measuredAt: string;
   deltaRms: number | null;
   deltaMaxRms: number | null;
@@ -97,7 +108,8 @@ function flatten(m: MeasurementRow): FlatRow | null {
     maxRms: m.max_rms,
     peak: m.peak,
     crestFactor: m.crest_factor,
-    alarmLevel: m.alarm_level,
+    alarmLevel: effectiveAlarm(m),
+    override: overrideOf(m),
     measuredAt: m.measured_at,
     deltaRms: null,
     deltaMaxRms: null,
@@ -156,13 +168,16 @@ function groupByEquipment(rows: FlatRow[]): EquipmentGroup[] {
 type Metric = 'overallRms' | 'maxRms' | 'peak' | 'crestFactor';
 
 interface TrendEntry {
+  id: string;
   date: string;
   fullDate: string;
   overallRms: number | null;
   maxRms: number | null;
   peak: number | null;
   crestFactor: number | null;
+  /** Effective level — dots are coloured by what the app acts on, not the raw cutoff. */
   alarmLevel: string;
+  override: AlarmOverride | null;
 }
 
 const METRIC_OPTIONS: { key: Metric; label: string; color: string }[] = [
@@ -187,10 +202,13 @@ const CF_THRESHOLDS = [
 
 function CustomDot({ cx, cy, payload }: { cx?: number; cy?: number; payload?: TrendEntry }) {
   if (cx == null || cy == null || !payload) return null;
+  // Reclassified readings get a dark ring, so a suppressed spike stays visible
+  // on the trend instead of quietly turning green.
+  const overridden = payload.override != null;
   return (
-    <circle cx={cx} cy={cy} r={4}
+    <circle cx={cx} cy={cy} r={overridden ? 5 : 4}
       fill={ALARM_DOT[payload.alarmLevel] ?? '#22c55e'}
-      stroke="white" strokeWidth={1.5} />
+      stroke={overridden ? '#111827' : 'white'} strokeWidth={overridden ? 2 : 1.5} />
   );
 }
 
@@ -286,33 +304,153 @@ function SignalView({ waveformPath, fftPath, sampleRate }: {
   );
 }
 
-function TrendModal({ point, equipmentTag, onClose }: {
+// ── Alarm classification panel ────────────────────────────────────────────────
+//
+// Scoped to the LATEST reading on purpose: findings derive from the latest
+// reading, so that is the one that drives the alarm, and an override there
+// expires by itself when the next survey lands.
+
+function ClassificationPanel({ reading, canOverride, onSaved }: {
+  reading: TrendEntry;
+  canOverride: boolean;
+  onSaved: () => void;
+}) {
+  const ov = reading.override;
+  const computed = ov?.computed ?? reading.alarmLevel;
+
+  const [level, setLevel]   = useState<string>(ov?.level ?? computed);
+  const [reason, setReason] = useState<string>(ov?.reason ?? '');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr]       = useState<string | null>(null);
+
+  // The panel is keyed on the reading id upstream, so this only resyncs when the
+  // same reading changes underneath us (after a save).
+  useEffect(() => {
+    setLevel(ov?.level ?? computed);
+    setReason(ov?.reason ?? '');
+  }, [ov?.level, ov?.reason, computed]);
+
+  const dirty = level !== (ov?.level ?? computed) || reason.trim() !== (ov?.reason ?? '');
+
+  async function save(clear: boolean) {
+    setSaving(true); setErr(null);
+    const { error } = await supabase.rpc('set_alarm_override', {
+      p_measurement_id: reading.id,
+      p_level:  clear ? null : level,
+      p_reason: clear ? null : reason.trim(),
+    });
+    setSaving(false);
+    if (error) { setErr(error.message); return; }
+    onSaved();
+  }
+
+  return (
+    <div className="border-t border-gray-100 pt-4">
+      <p className="text-sm font-semibold text-gray-700 mb-3 flex items-center gap-1.5">
+        <PenLine size={15} className="text-primary" /> Alarm classification
+        <span className="text-xs font-normal text-gray-400">
+          · latest reading, {fmtDate(reading.fullDate)}
+        </span>
+      </p>
+
+      {/* Computed → effective */}
+      <div className="flex items-center gap-3 flex-wrap text-xs mb-3">
+        <span className="text-gray-400">Computed</span>
+        <span className={`font-semibold px-2 py-0.5 rounded-full ${A(computed).badge} ${ov ? 'line-through opacity-60' : ''}`}>
+          {computed}
+        </span>
+        <span className="text-gray-300 font-mono">CF {fmt(reading.crestFactor)}</span>
+        {ov && (
+          <>
+            <span className="text-gray-300">→</span>
+            <span className="text-gray-400">Effective</span>
+            <span className={`font-semibold px-2 py-0.5 rounded-full ${A(ov.level).badge}`}>{ov.level}</span>
+          </>
+        )}
+      </div>
+
+      {/* Audit line — visible to every role, not just the analyst who set it */}
+      {ov && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 mb-3">
+          <p className="text-[11px] font-semibold text-amber-800">
+            Reclassified{ov.by ? ` by ${ov.by}` : ''}
+            {ov.at ? ` · ${new Date(ov.at).toLocaleDateString('en-US', { dateStyle: 'medium' })}` : ''}
+          </p>
+          {ov.reason && <p className="text-[11px] text-amber-700 mt-0.5 italic">"{ov.reason}"</p>}
+        </div>
+      )}
+
+      {canOverride ? (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <select value={level} onChange={e => setLevel(e.target.value)} disabled={saving}
+              className="px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs bg-white text-gray-700 disabled:opacity-50">
+              {ALARM_LEVELS.map(l => (
+                <option key={l} value={l}>{l}{l === computed ? ' (computed)' : ''}</option>
+              ))}
+            </select>
+            <input type="text" value={reason} onChange={e => setReason(e.target.value)} disabled={saving}
+              placeholder="Reason — required (e.g. transient spike, air blow-off during capture)"
+              className="flex-1 min-w-[220px] px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50" />
+            <button onClick={() => save(false)}
+              disabled={saving || !dirty || level === computed || !reason.trim()}
+              title={level === computed ? 'Same as the computed level — nothing to override' : undefined}
+              className="px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold disabled:bg-gray-200 disabled:text-gray-400 transition-colors">
+              {saving ? <Loader2 size={13} className="animate-spin" /> : 'Save override'}
+            </button>
+            {ov && (
+              <button onClick={() => save(true)} disabled={saving}
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+                <RotateCcw size={12} /> Clear
+              </button>
+            )}
+          </div>
+          <p className="text-[10px] text-gray-400">
+            Applies to this reading only — the next survey is evaluated fresh. The computed value is kept.
+          </p>
+          {err && <p className="text-[11px] text-red-600 font-medium">{err}</p>}
+        </div>
+      ) : (
+        !ov && <p className="text-[11px] text-gray-400">Only IME analysts can reclassify a reading.</p>
+      )}
+    </div>
+  );
+}
+
+function TrendModal({ point, equipmentTag, onClose, onOverrideSaved }: {
   point: { id: string; name: string };
   equipmentTag: string;
   onClose: () => void;
+  onOverrideSaved: () => void;
 }) {
+  const { profile } = useAuth();
+  const canOverride = profile?.role === 'ime_admin';
+
   const [data, setData]       = useState<TrendEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [metric, setMetric]   = useState<Metric>('overallRms');
   const [sig, setSig]         = useState<{ waveformPath: string; fftPath: string | null; sampleRate: number | null } | null>(null);
   const [bearingRpm, setBearingRpm] = useState<number | null>(null);
+  const [reloadKey, setReloadKey]   = useState(0);
 
   useEffect(() => {
     supabase
       .from('measurements')
-      .select('overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, waveform_path, fft_path, sample_rate')
+      .select(`id, overall_rms, max_rms, peak, crest_factor, ${ALARM_COLUMNS}, measured_at, waveform_path, fft_path, sample_rate`)
       .eq('measurement_point_id', point.id)
       .order('measured_at', { ascending: true })
       .then(({ data: rows }) => {
         const rs = (rows ?? []) as Array<Record<string, unknown>>;
         setData(rs.map(m => ({
+          id:         m.id as string,
           date:       new Date(m.measured_at as string).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' }),
           fullDate:   m.measured_at as string,
           overallRms: m.overall_rms as number | null,
           maxRms:     m.max_rms as number | null,
           peak:       m.peak as number | null,
           crestFactor: m.crest_factor as number | null,
-          alarmLevel: m.alarm_level as string,
+          alarmLevel: effectiveAlarm(m as never),
+          override:   overrideOf(m as never),
         })));
         const withSig = rs.filter(m => m.waveform_path);
         const s = withSig.length ? withSig[withSig.length - 1] : null;
@@ -321,7 +459,7 @@ function TrendModal({ point, equipmentTag, onClose }: {
       });
     supabase.from('measurement_points').select('bearing_rotating_speed').eq('id', point.id).single()
       .then(({ data: p }) => setBearingRpm((p?.bearing_rotating_speed as number) ?? null));
-  }, [point.id]);
+  }, [point.id, reloadKey]);
 
   const cfg = METRIC_OPTIONS.find(m => m.key === metric)!;
   const hasEnough = data.length >= 2;
@@ -331,6 +469,10 @@ function TrendModal({ point, equipmentTag, onClose }: {
   const delta  = latest && prev && latest[metric] != null && prev[metric] != null
     ? (latest[metric] as number) - (prev[metric] as number)
     : null;
+
+  // Refetch the trend so the dot recolours, and tell the page to refresh its
+  // counts — the override changes the effective level everything else reads.
+  const handleSaved = () => { setReloadKey(k => k + 1); onOverrideSaved(); };
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6" onClick={onClose}>
@@ -419,8 +561,18 @@ function TrendModal({ point, equipmentTag, onClose }: {
           {/* Reading count */}
           {!loading && (
             <p className="text-xs text-gray-300 text-right">
-              {data.length} measurement{data.length !== 1 ? 's' : ''} · dots colored by alarm level
+              {data.length} measurement{data.length !== 1 ? 's' : ''} · dots colored by alarm level · ringed = reclassified
             </p>
+          )}
+
+          {/* Alarm classification */}
+          {!loading && latest && (
+            <ClassificationPanel
+              key={latest.id}
+              reading={latest}
+              canOverride={canOverride}
+              onSaved={handleSaved}
+            />
           )}
 
           {/* Signal analysis */}
@@ -467,7 +619,7 @@ export default function Ultrasound() {
       let q = supabase
         .from('measurements')
         .select(`
-          id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at,
+          id, overall_rms, max_rms, peak, crest_factor, ${ALARM_COLUMNS}, measured_at,
           measurement_points (
             id, name, sensor_model,
             components (
@@ -743,11 +895,14 @@ export default function Ultrasound() {
                             <span title="Peak" className="inline-flex items-center gap-1"><span className="text-gray-300">pk</span>{fmt(r.peak)}<DeltaArrow d={r.deltaPeak} /></span>
                           </div>
 
-                          {/* Alarm badge */}
-                          <div className="shrink-0 w-20 text-right">
-                            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${pcfg.badge}`}>
+                          {/* Alarm badge — reclassified points carry a marker so a
+                              suppressed spike is never invisible in the list */}
+                          <div className="shrink-0 w-24 text-right">
+                            <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${pcfg.badge}`}
+                              title={r.override ? overrideSummary(r.override) : undefined}>
                               <span className={`w-1.5 h-1.5 rounded-full ${pcfg.dot}`} />
                               {r.alarmLevel}
+                              {r.override && <PenLine size={10} className="opacity-70" />}
                             </span>
                           </div>
 
@@ -772,6 +927,7 @@ export default function Ultrasound() {
           point={{ id: selectedPoint.id, name: selectedPoint.name }}
           equipmentTag={selectedPoint.equipmentTag}
           onClose={() => setSelectedPoint(null)}
+          onOverrideSaved={fetchData}
         />
       )}
     </div>

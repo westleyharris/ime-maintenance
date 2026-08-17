@@ -7,6 +7,7 @@ import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabase';
 import { fetchAllRows } from '../lib/fetchAll';
 import { useScope } from '../context/ScopeContext';
+import { ALARM_COLUMNS, effectiveAlarm, overrideOf, overrideSummary, type AlarmOverride } from '../utils/alarm';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -17,6 +18,10 @@ interface MeasurementRow {
   peak: number | null;
   crest_factor: number | null;
   alarm_level: string | null;
+  alarm_override: string | null;
+  override_reason: string | null;
+  overridden_by_name: string | null;
+  overridden_at: string | null;
   measured_at: string | null;
   measurement_point_id: string;
   measurement_points: {
@@ -47,6 +52,7 @@ interface ReportRow {
   peak: number;
   crest: number;
   alarmLevel: string;
+  override: AlarmOverride | null;
   measuredAt: string;
 }
 
@@ -388,6 +394,19 @@ async function generateReport(
     },
   });
 
+  // Legend for the asterisk used in the data table — only printed when the
+  // report actually contains a reclassified reading.
+  const overridden = sorted.filter(r => r.override);
+  if (overridden.length) {
+    const ty = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 0.22;
+    doc.setFont('helvetica', 'bold').setFontSize(8.5).setTextColor(29, 29, 31);
+    doc.text('* Analyst reclassification', M, ty);
+    doc.setFont('helvetica', 'normal').setFontSize(8).setTextColor(90, 90, 111);
+    const note = `${overridden.length} reading${overridden.length === 1 ? '' : 's'} in this report carry an analyst reclassification, marked with an asterisk in the ALARM column. The measured values are unchanged — a certified analyst reviewed the signal and judged the computed alarm level unrepresentative of the machine's condition (for example a transient crest-factor spike from impulsive noise during capture). The computed level, the reason and the analyst are recorded against each reading.`;
+    const noteLines = doc.splitTextToSize(note, CW);
+    doc.text(noteLines, M, ty + 0.16);
+  }
+
   addFooter(1);
 
   // ─── Page 2: Charts ───────────────────────────────────────────────────────
@@ -445,7 +464,8 @@ async function generateReport(
       },
       didDrawCell: (data) => {
         if (data.column.index === 2 && data.section === 'body') {
-          const lvl = chunk[data.row.index]?.alarmLevel;
+          const row = chunk[data.row.index];
+          const lvl = row?.alarmLevel;
           if (!lvl) return;
           const [bg, fg] = ALARM_PILL[lvl] ?? ['#ebebf2', '#3d3d3f'];
           const cell = data.cell;
@@ -455,7 +475,9 @@ async function generateReport(
           const pw = cell.width * 0.82, ph = cell.height * 0.58;
           doc.roundedRect(cell.x + (cell.width - pw) / 2, cell.y + (cell.height - ph) / 2, pw, ph, 0.04, 0.04, 'F');
           doc.setTextColor(fr, fg2, fb).setFontSize(6.5).setFont('helvetica', 'bold');
-          doc.text(lvl, cell.x + cell.width / 2, cell.y + cell.height / 2 + 0.008, { align: 'center', baseline: 'middle' });
+          // Asterisk marks an analyst reclassification — a client must never read
+          // an overridden level as the raw computed one. Legend on page 2.
+          doc.text(lvl + (row.override ? ' *' : ''), cell.x + cell.width / 2, cell.y + cell.height / 2 + 0.008, { align: 'center', baseline: 'middle' });
         }
       },
     });
@@ -508,7 +530,7 @@ export default function Reports() {
       let q = supabase
         .from('measurements')
         .select(`
-          id, overall_rms, max_rms, peak, crest_factor, alarm_level, measured_at, measurement_point_id,
+          id, overall_rms, max_rms, peak, crest_factor, ${ALARM_COLUMNS}, measured_at, measurement_point_id,
           measurement_points (
             name,
             components (
@@ -543,7 +565,8 @@ export default function Reports() {
         maxRms:     m.max_rms        ?? 0,
         peak:       m.peak           ?? 0,
         crest:      m.crest_factor   ?? 0,
-        alarmLevel: m.alarm_level    ?? 'Normal',
+        alarmLevel: effectiveAlarm(m),
+        override:   overrideOf(m),
         measuredAt: m.measured_at    ?? '',
       });
     }
@@ -644,10 +667,12 @@ export default function Reports() {
   };
 
   const exportCSV = () => {
-    const headers = ['Line', 'Section', 'Equipment', 'Component', 'Point', 'RMS', 'Max RMS', 'Peak', 'Crest Factor', 'Alarm Level', 'Date'];
+    const headers = ['Line', 'Section', 'Equipment', 'Component', 'Point', 'RMS', 'Max RMS', 'Peak', 'Crest Factor', 'Alarm Level', 'Computed Level', 'Override Reason', 'Overridden By', 'Date'];
     const csvRows = sortedRows.map(r =>
-      [r.line, r.section, r.equipment, r.component, r.point, r.rms, r.maxRms, r.peak, r.crest, r.alarmLevel, fmtDate(r.measuredAt)]
-        .map(v => `"${v}"`).join(',')
+      [r.line, r.section, r.equipment, r.component, r.point, r.rms, r.maxRms, r.peak, r.crest, r.alarmLevel,
+       r.override?.computed ?? '', r.override?.reason ?? '', r.override?.by ?? '', fmtDate(r.measuredAt)]
+        // Escape embedded quotes — an override reason is free text.
+        .map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
     );
     const blob = new Blob([headers.join(',') + '\n' + csvRows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -892,8 +917,9 @@ export default function Reports() {
                         <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{row.component}</td>
                         <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">{row.point}</td>
                         <td className="px-3 py-2.5">
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${ALARM_BADGE_BG[row.alarmLevel]}`}>
-                            {row.alarmLevel}
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${ALARM_BADGE_BG[row.alarmLevel]}`}
+                            title={row.override ? overrideSummary(row.override) : undefined}>
+                            {row.alarmLevel}{row.override && ' *'}
                           </span>
                         </td>
                         <td className={`px-3 py-2.5 text-center tabular-nums text-xs ${metric === 'rms'    ? 'font-bold text-gray-900' : 'text-gray-400'}`}>{fmt(row.rms)}</td>
