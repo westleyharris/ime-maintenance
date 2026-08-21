@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Download, Loader2, FileBarChart2, RefreshCw, Building2, FileText, Activity, Search, Calendar,
+  Download, Loader2, FileBarChart2, RefreshCw, Building2, FileText, Activity, Search, Calendar, ChevronDown,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -549,15 +549,28 @@ export default function Reports() {
   const [metric, setMetric] = useState<MetricKey>('rms');
   const [search, setSearch] = useState('');
   const [filterLine, setFilterLine]   = useState('');
-  const [filterAlarm, setFilterAlarm] = useState('');
+  const [filterAlarms, setFilterAlarms] = useState<string[]>([]);
+  const [alarmMenuOpen, setAlarmMenuOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo]     = useState('');
   const chartUrlRef = useRef<string | null>(null);
+  const alarmMenuRef = useRef<HTMLDivElement>(null);
 
   const locationName = locations.find(l => l.id === selectedLocationId)?.name ?? 'All Locations';
   const companyName  = (companies as { id: string; name: string }[])?.find(c => c.id === selectedCompanyId)?.name ?? 'IME';
 
   useEffect(() => { chartUrlRef.current = chartUrl; }, [chartUrl]);
+
+  useEffect(() => {
+    if (!alarmMenuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (alarmMenuRef.current && !alarmMenuRef.current.contains(e.target as Node)) {
+        setAlarmMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [alarmMenuOpen]);
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -612,7 +625,7 @@ export default function Reports() {
     setChartStatus({ type: 'idle', msg: '' });
     setSearch('');
     setFilterLine('');
-    setFilterAlarm('');
+    setFilterAlarms([]);
     setLoading(false);
   }, [selectedCompanyId, selectedLocationId]);
 
@@ -656,7 +669,8 @@ export default function Reports() {
   // Line filter applies everywhere. Alarm filter is table/CSV only — charts
   // keep the full alarm mix so filtering to Danger does not produce a 100% pie.
   const lineRows = rows.filter(r => !filterLine || r.line === filterLine);
-  const baseRows = lineRows.filter(r => !filterAlarm || r.alarmLevel === filterAlarm);
+  const hasAlarmFilter = filterAlarms.length > 0;
+  const baseRows = lineRows.filter(r => !hasAlarmFilter || filterAlarms.includes(r.alarmLevel));
 
   const chartSorted = [...lineRows].sort(
     (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0)
@@ -960,17 +974,54 @@ export default function Reports() {
                 <option value="">All lines</option>
                 {lineOptions.map(l => <option key={l} value={l}>{l}</option>)}
               </select>
-              <select
-                value={filterAlarm}
-                onChange={e => setFilterAlarm(e.target.value)}
-                className="py-2.5 px-3 border border-gray-200 rounded-xl bg-white text-[13px] text-gray-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/[0.08] transition-all"
-              >
-                <option value="">All alarms</option>
-                {ALARM_ORDER.map(l => <option key={l} value={l}>{l}</option>)}
-              </select>
-              {(filterLine || filterAlarm || search) && (
+              <div className="relative" ref={alarmMenuRef}>
                 <button
-                  onClick={() => { setFilterLine(''); setFilterAlarm(''); setSearch(''); }}
+                  type="button"
+                  onClick={() => setAlarmMenuOpen(o => !o)}
+                  className={`flex items-center gap-2 py-2.5 px-3 border rounded-xl bg-white text-[13px] outline-none transition-all whitespace-nowrap ${
+                    alarmMenuOpen
+                      ? 'border-primary/40 ring-2 ring-primary/[0.08] text-gray-800'
+                      : 'border-gray-200 text-gray-700 hover:border-gray-300'
+                  }`}
+                >
+                  <span className="max-w-[160px] truncate">
+                    {hasAlarmFilter
+                      ? ALARM_ORDER.filter(l => filterAlarms.includes(l)).join(', ')
+                      : 'All alarms'}
+                  </span>
+                  <ChevronDown size={14} className={`text-gray-400 shrink-0 transition-transform ${alarmMenuOpen ? 'rotate-180' : ''}`} />
+                </button>
+                {alarmMenuOpen && (
+                  <div className="absolute z-30 top-full right-0 mt-1.5 min-w-[200px] bg-white border border-gray-200 rounded-xl shadow-lg py-1.5">
+                    <p className="px-3 pt-1 pb-1.5 text-[10px] font-bold tracking-widest text-gray-400 uppercase">
+                      Select multiple
+                    </p>
+                    {ALARM_ORDER.map(l => {
+                      const on = filterAlarms.includes(l);
+                      return (
+                        <label
+                          key={l}
+                          className="flex items-center gap-2.5 px-3 py-2 hover:bg-gray-50 cursor-pointer"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() => setFilterAlarms(prev =>
+                              prev.includes(l) ? prev.filter(x => x !== l) : [...prev, l]
+                            )}
+                            className="w-3.5 h-3.5 rounded border-gray-300 text-primary focus:ring-primary/30 cursor-pointer"
+                          />
+                          <span className={`w-2 h-2 rounded-full shrink-0 ${ALARM_DOT[l]}`} />
+                          <span className={`text-[13px] ${on ? 'font-semibold text-gray-800' : 'text-gray-600'}`}>{l}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+              {(filterLine || hasAlarmFilter || search) && (
+                <button
+                  onClick={() => { setFilterLine(''); setFilterAlarms([]); setSearch(''); }}
                   className="text-[12px] font-semibold text-primary hover:underline whitespace-nowrap px-1"
                 >
                   Clear
@@ -978,7 +1029,7 @@ export default function Reports() {
               )}
               <span className="text-[12px] text-gray-500 whitespace-nowrap px-3 py-2.5 border border-gray-200 rounded-xl bg-white shadow-sm">
                 <strong className="text-gray-800">{visibleRows.length}</strong>
-                {(search || filterLine || filterAlarm) ? ` / ${rows.length}` : ''} rows
+                {(search || filterLine || hasAlarmFilter) ? ` / ${rows.length}` : ''} rows
               </span>
             </div>
 
@@ -1012,7 +1063,7 @@ export default function Reports() {
                     {visibleRows.length === 0 ? (
                       <tr>
                         <td colSpan={10} className="text-center py-12 text-sm text-gray-400">
-                          {hasPeriod && !filterLine && !filterAlarm && !search
+                          {hasPeriod && !filterLine && !hasAlarmFilter && !search
                             ? 'No assets in this date range'
                             : 'No assets match your filters'}
                         </td>
