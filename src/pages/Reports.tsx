@@ -319,7 +319,8 @@ function renderPieChart(rows: ReportRow[]): string {
 // ── PDF generator ─────────────────────────────────────────────────────────────
 
 async function generateReport(
-  rows: ReportRow[],
+  tableRows: ReportRow[],
+  chartRows: ReportRow[],
   metricKey: MetricKey,
   metricLabel: string,
   locationName: string,
@@ -327,13 +328,18 @@ async function generateReport(
   periodLabel: string,
   fileStamp: string,
 ) {
-  const sorted = [...rows].sort(
+  const sorted = [...tableRows].sort(
     (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metricKey] ?? 0) - (a[metricKey] ?? 0)
   );
-  const dw = sorted.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
+  const chartSorted = [...chartRows].sort(
+    (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metricKey] ?? 0) - (a[metricKey] ?? 0)
+  );
+  // Charts ignore the alarm-level filter so a Danger-only table does not
+  // collapse the pie to 100% and the bar chart to a single color.
+  const dw = chartSorted.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
 
   const barImg = renderBarChart(dw, metricKey, metricLabel);
-  const pieImg = renderPieChart(sorted);
+  const pieImg = renderPieChart(chartSorted);
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
   const PW = 8.5, PH = 11.0, M = 0.75;
@@ -447,7 +453,7 @@ async function generateReport(
   doc.addImage(barImg, 'PNG', M, chartTopY, CW, barH);
   const pieLabelY = chartTopY + barH + 0.20;
   doc.setFont('helvetica', 'normal').setFontSize(8.5).setTextColor(90, 90, 111);
-  doc.text(`Alarm Level Distribution  —  ${sorted.length} total readings`, M, pieLabelY);
+  doc.text(`Alarm Level Distribution  —  ${chartSorted.length} total readings`, M, pieLabelY);
   const pieW = Math.min(CW, pieH * 1.0);
   const pieX = M + (CW - pieW) / 2;
   doc.addImage(pieImg, 'PNG', pieX, pieLabelY + 0.15, pieW, pieH - 0.22);
@@ -647,10 +653,13 @@ export default function Reports() {
     .filter(l => l && l !== '—')
     .sort();
 
-  // Line + alarm filters drive the table, chart, CSV and report.
-  const baseRows = rows.filter(r =>
-    (!filterLine  || r.line === filterLine) &&
-    (!filterAlarm || r.alarmLevel === filterAlarm)
+  // Line filter applies everywhere. Alarm filter is table/CSV only — charts
+  // keep the full alarm mix so filtering to Danger does not produce a 100% pie.
+  const lineRows = rows.filter(r => !filterLine || r.line === filterLine);
+  const baseRows = lineRows.filter(r => !filterAlarm || r.alarmLevel === filterAlarm);
+
+  const chartSorted = [...lineRows].sort(
+    (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0)
   );
 
   const sortedRows = [...baseRows].sort(
@@ -672,7 +681,7 @@ export default function Reports() {
     setGeneratingChart(true);
     setChartStatus({ type: 'loading', msg: 'Generating chart…' });
     try {
-      const dw = sortedRows.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
+      const dw = chartSorted.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
       if (!dw.length) {
         setChartStatus({ type: 'error', msg: 'No Danger or Warning assets to plot.' });
         setGeneratingChart(false);
@@ -690,17 +699,14 @@ export default function Reports() {
     }
   };
 
-  // Auto-refresh chart when metric or filters change (only if already visible)
+  // Auto-refresh chart when metric, line, or period changes (not alarm filter)
   useEffect(() => {
     if (!chartUrlRef.current) return;
-    const dw = rows
-      .filter(r => (!filterLine || r.line === filterLine) && (!filterAlarm || r.alarmLevel === filterAlarm))
-      .sort((a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0))
-      .filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
+    const dw = chartSorted.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
     if (dw.length) setChartUrl(renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel));
     else setChartUrl(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metric, filterLine, filterAlarm, dateFrom, dateTo]);
+  }, [metric, filterLine, dateFrom, dateTo]);
 
   const handleDownloadPNG = () => {
     if (!chartUrl) return;
@@ -715,7 +721,7 @@ export default function Reports() {
     setGeneratingReport(true);
     try {
       const m = METRICS.find(x => x.key === metric)!;
-      await generateReport(sortedRows, metric, m.pdfLabel, locationName, companyName, periodLabel, fileStamp);
+      await generateReport(sortedRows, chartSorted, metric, m.pdfLabel, locationName, companyName, periodLabel, fileStamp);
     } finally {
       setGeneratingReport(false);
     }
