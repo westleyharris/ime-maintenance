@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Download, Loader2, FileBarChart2, RefreshCw, Building2, FileText, Activity, Search,
+  Download, Loader2, FileBarChart2, RefreshCw, Building2, FileText, Activity, Search, Calendar,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -123,9 +123,36 @@ const METHODOLOGY_ROWS: [string, string, string][] = [
 
 function fmt(v: number | null, d = 2) { return v != null ? v.toFixed(d) : '—'; }
 
+function dateKey(iso: string | null) {
+  return iso ? iso.slice(0, 10) : '';
+}
+
 function fmtDate(iso: string | null) {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const key = dateKey(iso);
+  if (!key) return '—';
+  const [y, m, d] = key.split('-').map(Number);
+  if (!y || !m || !d) return '—';
+  // Parse as local calendar date so YYYY-MM-DD is not shifted by UTC.
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function inDateRange(iso: string, from: string, to: string) {
+  const d = dateKey(iso);
+  if (!d) return false;
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+}
+
+function latestPerPoint(measurements: ReportRow[]): ReportRow[] {
+  const seen = new Set<string>();
+  const out: ReportRow[] = [];
+  for (const m of measurements) {
+    if (seen.has(m.pointId)) continue;
+    seen.add(m.pointId);
+    out.push(m);
+  }
+  return out;
 }
 
 function hexToRgb(hex: string): [number, number, number] {
@@ -297,6 +324,8 @@ async function generateReport(
   metricLabel: string,
   locationName: string,
   companyName: string,
+  periodLabel: string,
+  fileStamp: string,
 ) {
   const sorted = [...rows].sort(
     (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metricKey] ?? 0) - (a[metricKey] ?? 0)
@@ -324,7 +353,7 @@ async function generateReport(
     doc.text(title, M, M + 0.44);
     doc.setFontSize(8);
     doc.text(`${companyName} — ${locationName}`, PW - M, M + 0.22, { align: 'right' });
-    doc.text(new Date().toLocaleDateString('en-US', { dateStyle: 'long' }), PW - M, M + 0.44, { align: 'right' });
+    doc.text(periodLabel, PW - M, M + 0.44, { align: 'right' });
   }
 
   // ─── Page 1 ───────────────────────────────────────────────────────────────
@@ -334,7 +363,7 @@ async function generateReport(
   doc.text('Introduction', M, M + 0.55);
   doc.setFontSize(8);
   doc.text(`${companyName} — ${locationName}`, PW - M, M + 0.3, { align: 'right' });
-  doc.text(new Date().toLocaleDateString('en-US', { dateStyle: 'long' }), PW - M, M + 0.55, { align: 'right' });
+  doc.text(periodLabel, PW - M, M + 0.55, { align: 'right' });
   doc.setDrawColor(220, 220, 230).setLineWidth(0.008).line(M, M + 0.68, PW - M, M + 0.68);
 
   let y = M + 0.90;
@@ -425,8 +454,8 @@ async function generateReport(
   addFooter(2);
 
   // ─── Pages 3+: Data table ─────────────────────────────────────────────────
-  const colNames = ['#', 'ASSET PATH', 'ALARM', 'RMS', 'MAX RMS', 'PEAK', 'CREST FACTOR'];
-  const colWidths = [0.22, 2.95, 0.72, 0.65, 0.65, 0.65, 0.75];
+  const colNames = ['#', 'ASSET PATH', 'DATE', 'ALARM', 'RMS', 'MAX RMS', 'PEAK', 'CREST FACTOR'];
+  const colWidths = [0.22, 2.38, 0.72, 0.70, 0.62, 0.62, 0.62, 0.72];
   let pageNum = 3;
 
   for (let offset = 0; offset < sorted.length; offset += 30) {
@@ -440,7 +469,7 @@ async function generateReport(
     autoTable(doc, {
       head: [colNames],
       body: chunk.map((r, i) => [
-        String(offset + i + 1), r.label, r.alarmLevel,
+        String(offset + i + 1), r.label, fmtDate(r.measuredAt), r.alarmLevel,
         fmt(r.rms), fmt(r.maxRms), fmt(r.peak), fmt(r.crest),
       ]),
       startY: M + 0.68,
@@ -451,19 +480,20 @@ async function generateReport(
         0: { cellWidth: colWidths[0], halign: 'center' },
         1: { cellWidth: colWidths[1] },
         2: { cellWidth: colWidths[2], halign: 'center' },
-        3: { cellWidth: colWidths[3], halign: 'center', fontStyle: 'bold' },
-        4: { cellWidth: colWidths[4], halign: 'center' },
+        3: { cellWidth: colWidths[3], halign: 'center' },
+        4: { cellWidth: colWidths[4], halign: 'center', fontStyle: 'bold' },
         5: { cellWidth: colWidths[5], halign: 'center' },
         6: { cellWidth: colWidths[6], halign: 'center' },
+        7: { cellWidth: colWidths[7], halign: 'center' },
       },
       alternateRowStyles: { fillColor: [245, 245, 248] },
       willDrawCell: (data) => {
-        if (data.column.index === 2 && data.section === 'body') {
+        if (data.column.index === 3 && data.section === 'body') {
           data.cell.text = [];  // suppress autotable text — pill drawn in didDrawCell
         }
       },
       didDrawCell: (data) => {
-        if (data.column.index === 2 && data.section === 'body') {
+        if (data.column.index === 3 && data.section === 'body') {
           const row = chunk[data.row.index];
           const lvl = row?.alarmLevel;
           if (!lvl) return;
@@ -485,7 +515,7 @@ async function generateReport(
     addFooter(pageNum++);
   }
 
-  doc.save(`US_Report_${locationName.replace(/\s+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`);
+  doc.save(`US_Report_${locationName.replace(/\s+/g, '_')}_${fileStamp}.pdf`);
 }
 
 // ── Panel label ───────────────────────────────────────────────────────────────
@@ -504,7 +534,7 @@ function PanelLabel({ children }: { children: React.ReactNode }) {
 export default function Reports() {
   const { selectedCompanyId, selectedLocationId, locations, companies } = useScope();
 
-  const [rows, setRows]       = useState<ReportRow[]>([]);
+  const [allRows, setAllRows] = useState<ReportRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [chartUrl, setChartUrl]                 = useState<string | null>(null);
   const [chartStatus, setChartStatus]           = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; msg: string }>({ type: 'idle', msg: '' });
@@ -514,6 +544,8 @@ export default function Reports() {
   const [search, setSearch] = useState('');
   const [filterLine, setFilterLine]   = useState('');
   const [filterAlarm, setFilterAlarm] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo]     = useState('');
   const chartUrlRef = useRef<string | null>(null);
 
   const locationName = locations.find(l => l.id === selectedLocationId)?.name ?? 'All Locations';
@@ -523,7 +555,7 @@ export default function Reports() {
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
-    if (!selectedCompanyId) { setRows([]); return; }
+    if (!selectedCompanyId) { setAllRows([]); return; }
     setLoading(true);
 
     const { rows: raw } = await fetchAllRows<MeasurementRow>((from, to) => {
@@ -546,11 +578,9 @@ export default function Reports() {
       return q as unknown as PromiseLike<{ data: MeasurementRow[] | null; error: unknown }>;
     });
 
-    const seen = new Set<string>();
     const flat: ReportRow[] = [];
     for (const m of raw) {
-      if (seen.has(m.measurement_point_id) || !m.measurement_points) continue;
-      seen.add(m.measurement_point_id);
+      if (!m.measurement_points) continue;
       const eq  = m.measurement_points.components?.equipment;
       const sec = eq?.sections;
       flat.push({
@@ -571,7 +601,7 @@ export default function Reports() {
       });
     }
 
-    setRows(flat);
+    setAllRows(flat);
     setChartUrl(null);
     setChartStatus({ type: 'idle', msg: '' });
     setSearch('');
@@ -583,6 +613,31 @@ export default function Reports() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
+  let dateMin = '';
+  let dateMax = '';
+  for (const r of allRows) {
+    const d = dateKey(r.measuredAt);
+    if (!d) continue;
+    if (!dateMin || d < dateMin) dateMin = d;
+    if (!dateMax || d > dateMax) dateMax = d;
+  }
+
+  const hasPeriod = Boolean(dateFrom || dateTo);
+  const ranged = hasPeriod
+    ? allRows.filter(r => inDateRange(r.measuredAt, dateFrom, dateTo))
+    : allRows;
+  // Latest reading per point within the selected window (or all time if unset).
+  const rows = latestPerPoint(ranged);
+
+  const periodLabel = hasPeriod
+    ? (dateFrom && dateTo
+        ? `${fmtDate(dateFrom)} – ${fmtDate(dateTo)}`
+        : dateFrom ? `From ${fmtDate(dateFrom)}` : `Through ${fmtDate(dateTo)}`)
+    : new Date().toLocaleDateString('en-US', { dateStyle: 'long' });
+  const fileStamp = hasPeriod
+    ? `${dateFrom || dateMin || 'start'}_${dateTo || dateMax || 'end'}`
+    : new Date().toISOString().slice(0, 10);
+
   const counts = ALARM_ORDER.reduce<Record<string, number>>((acc, lvl) => {
     acc[lvl] = rows.filter(r => r.alarmLevel === lvl).length;
     return acc;
@@ -627,7 +682,7 @@ export default function Reports() {
       setChartUrl(url);
       const parts = (['Danger', 'Warning', 'Alert', 'Normal'] as const)
         .filter(l => counts[l] > 0).map(l => `${counts[l]} ${l}`);
-      setChartStatus({ type: 'success', msg: `✓ ${rows.length} assets · ${parts.join(' · ')}` });
+      setChartStatus({ type: 'success', msg: `✓ ${rows.length} assets${hasPeriod ? ` · ${periodLabel}` : ''} · ${parts.join(' · ')}` });
     } catch {
       setChartStatus({ type: 'error', msg: 'Chart generation failed.' });
     } finally {
@@ -635,23 +690,23 @@ export default function Reports() {
     }
   };
 
-  // Auto-refresh chart when metric changes (only if already visible)
+  // Auto-refresh chart when metric or filters change (only if already visible)
   useEffect(() => {
-    if (chartUrlRef.current && rows.length) {
-      const dw = rows
-        .filter(r => (!filterLine || r.line === filterLine) && (!filterAlarm || r.alarmLevel === filterAlarm))
-        .sort((a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0))
-        .filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
-      if (dw.length) setChartUrl(renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel));
-    }
+    if (!chartUrlRef.current) return;
+    const dw = rows
+      .filter(r => (!filterLine || r.line === filterLine) && (!filterAlarm || r.alarmLevel === filterAlarm))
+      .sort((a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0))
+      .filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
+    if (dw.length) setChartUrl(renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel));
+    else setChartUrl(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metric, filterLine, filterAlarm]);
+  }, [metric, filterLine, filterAlarm, dateFrom, dateTo]);
 
   const handleDownloadPNG = () => {
     if (!chartUrl) return;
     const a = document.createElement('a');
     a.href = chartUrl;
-    a.download = `US_Chart_${metric}_${new Date().toISOString().slice(0, 10)}.png`;
+    a.download = `US_Chart_${metric}_${fileStamp}.png`;
     a.click();
   };
 
@@ -660,7 +715,7 @@ export default function Reports() {
     setGeneratingReport(true);
     try {
       const m = METRICS.find(x => x.key === metric)!;
-      await generateReport(sortedRows, metric, m.pdfLabel, locationName, companyName);
+      await generateReport(sortedRows, metric, m.pdfLabel, locationName, companyName, periodLabel, fileStamp);
     } finally {
       setGeneratingReport(false);
     }
@@ -677,7 +732,7 @@ export default function Reports() {
     const blob = new Blob([headers.join(',') + '\n' + csvRows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `measurements_${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    a.href = url; a.download = `measurements_${fileStamp}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -700,6 +755,47 @@ export default function Reports() {
 
       {/* ════ SIDEBAR ════ */}
       <aside className="flex flex-col gap-0">
+
+        {/* Period */}
+        <PanelLabel>Period</PanelLabel>
+        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-5 mb-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Calendar size={13} className={hasPeriod ? 'text-primary' : 'text-gray-400'} />
+            <p className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">
+              {hasPeriod ? periodLabel : 'All dates'}
+            </p>
+          </div>
+          <label className="block mb-3">
+            <span className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              min={dateMin || undefined}
+              max={dateTo || dateMax || undefined}
+              onChange={e => setDateFrom(e.target.value)}
+              className="mt-1 w-full py-2 px-2.5 border border-gray-200 rounded-xl bg-white text-[13px] text-gray-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/[0.08] transition-all"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[10px] font-bold tracking-widest text-gray-400 uppercase">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              min={dateFrom || dateMin || undefined}
+              max={dateMax || undefined}
+              onChange={e => setDateTo(e.target.value)}
+              className="mt-1 w-full py-2 px-2.5 border border-gray-200 rounded-xl bg-white text-[13px] text-gray-700 outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/[0.08] transition-all"
+            />
+          </label>
+          {hasPeriod && (
+            <button
+              onClick={() => { setDateFrom(''); setDateTo(''); }}
+              className="mt-3 w-full text-[12px] font-semibold text-primary hover:underline"
+            >
+              Clear dates
+            </button>
+          )}
+        </div>
 
         {/* Metric selection */}
         <PanelLabel>Metric</PanelLabel>
@@ -740,7 +836,9 @@ export default function Reports() {
               <Loader2 size={11} className="animate-spin" /> Loading…
             </div>
           ) : rows.length === 0 ? (
-            <p className="text-xs text-gray-400">No data loaded</p>
+            <p className="text-xs text-gray-400">
+              {allRows.length > 0 && hasPeriod ? 'No data in this date range' : 'No data loaded'}
+            </p>
           ) : (
             <div className="space-y-3">
               {ALARM_ORDER.map(lvl => {
@@ -761,7 +859,7 @@ export default function Reports() {
                 );
               })}
               <p className="text-[10px] text-gray-300 pt-1 border-t border-gray-100 mt-2">
-                {rows.length} total · most recent per point
+                {rows.length} total · most recent per point{hasPeriod ? ' in range' : ''}
               </p>
             </div>
           )}
@@ -788,7 +886,7 @@ export default function Reports() {
               <p className={`text-[13px] font-medium truncate ${statusColor}`}>{chartStatus.msg}</p>
             ) : (
               <p className="text-[13px] text-gray-400">
-                {rows.length ? 'Select a metric and generate a chart.' : 'Loading data…'}
+                {loading ? 'Loading data…' : rows.length ? 'Select a metric and generate a chart.' : hasPeriod ? 'No measurements in this date range.' : 'No measurements for this selection.'}
               </p>
             )}
           </div>
@@ -825,7 +923,7 @@ export default function Reports() {
                 <polyline points="4,32 10,16 16,48 22,22 28,38 34,8 40,52 46,26 52,36 60,32" />
               </svg>
               <p className="text-[13px] text-gray-400">
-                {rows.length ? 'Select a metric and click Generate Chart' : 'Loading data…'}
+                {loading ? 'Loading data…' : rows.length ? 'Select a metric and click Generate Chart' : hasPeriod ? 'No measurements in this date range' : 'No measurements for this selection'}
               </p>
             </div>
           ) : (
@@ -834,7 +932,7 @@ export default function Reports() {
         </div>
 
         {/* Table section */}
-        {rows.length > 0 && (
+        {allRows.length > 0 && (
           <>
             {/* Table toolbar */}
             <div className="flex items-center gap-3 flex-wrap">
@@ -890,6 +988,7 @@ export default function Reports() {
                       <th className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.06em] uppercase text-gray-400 bg-gray-50/60">Equipment</th>
                       <th className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.06em] uppercase text-gray-400 bg-gray-50/60">Component</th>
                       <th className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.06em] uppercase text-gray-400 bg-gray-50/60">Point</th>
+                      <th className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.06em] uppercase text-gray-400 bg-gray-50/60">Date</th>
                       <th className="px-3 py-3 text-left text-[10px] font-bold tracking-[0.06em] uppercase text-gray-400 bg-gray-50/60">Alarm</th>
                       {METRICS.map(m => (
                         <th
@@ -906,8 +1005,10 @@ export default function Reports() {
                   <tbody>
                     {visibleRows.length === 0 ? (
                       <tr>
-                        <td colSpan={9} className="text-center py-12 text-sm text-gray-400">
-                          No assets match your filters
+                        <td colSpan={10} className="text-center py-12 text-sm text-gray-400">
+                          {hasPeriod && !filterLine && !filterAlarm && !search
+                            ? 'No assets in this date range'
+                            : 'No assets match your filters'}
                         </td>
                       </tr>
                     ) : visibleRows.map((row, i) => (
@@ -916,6 +1017,7 @@ export default function Reports() {
                         <td className="px-3 py-2.5 font-mono text-xs font-semibold text-gray-800 whitespace-nowrap">{row.equipment}</td>
                         <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap">{row.component}</td>
                         <td className="px-3 py-2.5 text-xs text-gray-400 whitespace-nowrap">{row.point}</td>
+                        <td className="px-3 py-2.5 text-xs text-gray-500 whitespace-nowrap tabular-nums">{fmtDate(row.measuredAt)}</td>
                         <td className="px-3 py-2.5">
                           <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${ALARM_BADGE_BG[row.alarmLevel]}`}
                             title={row.override ? overrideSummary(row.override) : undefined}>
@@ -936,7 +1038,7 @@ export default function Reports() {
         )}
 
         {/* Empty state */}
-        {!loading && rows.length === 0 && (
+        {!loading && allRows.length === 0 && (
           <div className="flex flex-col items-center justify-center py-14 text-gray-400 gap-2 bg-white border border-gray-100 rounded-2xl shadow-sm">
             <FileBarChart2 size={26} className="opacity-25" />
             <p className="text-sm">No measurements for this selection</p>
