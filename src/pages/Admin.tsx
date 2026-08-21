@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Building2, MapPin, Users, Plus, Loader2, X, ChevronRight, Check, Mail, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import AssetPhotoImport from '../components/AssetPhotoImport';
 import { useAuth } from '../context/AuthContext';
 import type { UserRole } from '../types/auth';
 
@@ -18,7 +19,7 @@ function fmtWhen(iso: string | null) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-type ActiveTab = 'companies' | 'users';
+type ActiveTab = 'companies' | 'users' | 'asset-photos';
 
 const ROLE_LABELS: Record<UserRole, string> = {
   ime_admin:     'IME Admin',
@@ -273,18 +274,18 @@ export default function Admin() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
-        <p className="text-sm text-gray-500">Manage companies, locations, and users</p>
+        <p className="text-sm text-gray-500">Manage companies, locations, users, and asset photos</p>
       </div>
 
       {/* Tabs */}
       <div className="flex items-center gap-1 border-b border-gray-200">
-        {(['companies', 'users'] as ActiveTab[]).map(tab => (
+        {(['companies', 'users', 'asset-photos'] as ActiveTab[]).map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
               activeTab === tab ? 'text-primary border-primary' : 'text-gray-400 border-transparent hover:text-gray-600'
             }`}
           >
-            {tab === 'companies' ? 'Companies & Locations' : 'Users'}
+            {tab === 'companies' ? 'Companies & Locations' : tab === 'users' ? 'Users' : 'Asset Photos'}
           </button>
         ))}
       </div>
@@ -653,6 +654,8 @@ export default function Admin() {
           )}
         </div>
       )}
+      {/* ── Asset Photos ── */}
+      {activeTab === 'asset-photos' && <AssetPhotoImport />}
     </div>
   );
 }
