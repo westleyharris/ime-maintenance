@@ -113,10 +113,10 @@ const INTRO_PARAGRAPHS = [
 ];
 
 const METHODOLOGY_ROWS: [string, string, string][] = [
-  ['Danger',  'CF > 14',       'Unexpected stoppage or possible catastrophic failure that generates a prolonged stoppage in the operation of the unit. This designation is intended to protect the integrity of the unit and production, requiring immediate corrective action.'],
-  ['Warning', '12 ≤ CF < 14', 'Unexpected stoppage or a significant increase in the ultrasonic trend according to the TWF/Spectral pattern. The unit exhibits symptoms of failure that may evolve over short periods. It is essential to schedule follow-up inspections at short intervals or initiate corrective work.'],
-  ['Alert',   '10 ≤ CF < 12', 'Minor failure state or possible indication of an anomaly. The primary objective of this designation is preventive observation, to monitor the specific component and determine its trend. No immediate corrective action is required.'],
-  ['Normal',  'CF < 10',       'No anomalies affecting production or damage identifiable by ultrasound are detected.'],
+  ['Danger',  'CF > 14',        'Unexpected stoppage or possible catastrophic failure that generates a prolonged stoppage in the operation of the unit. This designation is intended to protect the integrity of the unit and production, requiring immediate corrective action.'],
+  ['Warning', '12 <= CF < 14',  'Unexpected stoppage or a significant increase in the ultrasonic trend according to the TWF/Spectral pattern. The unit exhibits symptoms of failure that may evolve over short periods. It is essential to schedule follow-up inspections at short intervals or initiate corrective work.'],
+  ['Alert',   '10 <= CF < 12',  'Minor failure state or possible indication of an anomaly. The primary objective of this designation is preventive observation, to monitor the specific component and determine its trend. No immediate corrective action is required.'],
+  ['Normal',  'CF < 10',        'No anomalies affecting production or damage identifiable by ultrasound are detected.'],
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -162,6 +162,28 @@ function hexToRgb(hex: string): [number, number, number] {
     parseInt(hex.slice(5, 7), 16),
   ];
 }
+
+/** Fixed-size alarm badge — never scales with row height, so Normal matches Danger. */
+function drawAlarmPill(
+  doc: jsPDF,
+  cell: { x: number; y: number; width: number; height: number },
+  lvl: string,
+  extra: string,
+  size: { w: number; h: number; fontSize: number },
+) {
+  const [bg, fg] = ALARM_PILL[lvl] ?? ['#ebebf2', '#3d3d3f'];
+  const [br, bg2, bb] = hexToRgb(bg);
+  const [fr, fg2, fb] = hexToRgb(fg);
+  const px = cell.x + (cell.width - size.w) / 2;
+  const py = cell.y + (cell.height - size.h) / 2;
+  doc.setFillColor(br, bg2, bb);
+  doc.roundedRect(px, py, size.w, size.h, 0.03, 0.03, 'F');
+  doc.setTextColor(fr, fg2, fb).setFontSize(size.fontSize).setFont('helvetica', 'bold');
+  doc.text(lvl + extra, cell.x + cell.width / 2, cell.y + cell.height / 2, { align: 'center', baseline: 'middle' });
+}
+
+const METHOD_PILL = { w: 0.88, h: 0.18, fontSize: 7.5 };
+const TABLE_PILL  = { w: 0.58, h: 0.14, fontSize: 6.5 };
 
 // ── Canvas chart renderers ────────────────────────────────────────────────────
 
@@ -344,13 +366,6 @@ async function generateReport(
   const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
   const PW = 8.5, PH = 11.0, M = 0.75;
   const CW = PW - 2 * M;
-  const totalDataPages = Math.ceil(sorted.length / 30);
-  const totalPages = 2 + totalDataPages;
-
-  function addFooter(pageNum: number) {
-    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(150, 150, 160);
-    doc.text(`${pageNum} / ${totalPages}`, PW / 2, PH - M * 0.45, { align: 'center' });
-  }
 
   function addHeader(title: string) {
     doc.setFont('helvetica', 'bold').setFontSize(11).setTextColor(29, 29, 31);
@@ -396,12 +411,12 @@ async function generateReport(
     body: METHODOLOGY_ROWS,
     startY: y,
     margin: { left: M, right: M },
-    styles: { fontSize: 8, cellPadding: 0.07, textColor: [29, 29, 31], lineColor: [212, 212, 224], lineWidth: 0.005 },
+    styles: { fontSize: 8, cellPadding: 0.07, minCellHeight: 0.32, textColor: [29, 29, 31], lineColor: [212, 212, 224], lineWidth: 0.005 },
     headStyles: { fillColor: [235, 235, 242], textColor: [44, 44, 62], fontStyle: 'bold', halign: 'center' },
     columnStyles: {
-      0: { cellWidth: 1.05, halign: 'center', fontStyle: 'bold' },
-      1: { cellWidth: 1.10, halign: 'center' },
-      2: { cellWidth: CW - 2.15 },
+      0: { cellWidth: 1.10, halign: 'center', fontStyle: 'bold' },
+      1: { cellWidth: 1.25, halign: 'center' },
+      2: { cellWidth: CW - 2.35 },
     },
     alternateRowStyles: { fillColor: [245, 245, 248] },
     // Make alarm level text invisible before didDrawCell paints the pill over it
@@ -413,18 +428,7 @@ async function generateReport(
     didDrawCell: (data) => {
       if (data.column.index === 0 && data.section === 'body') {
         const lvl = METHODOLOGY_ROWS[data.row.index]?.[0];
-        const [bg, fg] = ALARM_PILL[lvl] ?? ['#ebebf2', '#3d3d3f'];
-        const cell = data.cell;
-        const cx2 = cell.x + cell.padding('left');
-        const cy2 = cell.y + cell.padding('top');
-        const cw2 = cell.width - cell.padding('left') - cell.padding('right');
-        const ch2 = cell.height - cell.padding('top') - cell.padding('bottom');
-        const [br, bg2, bb] = hexToRgb(bg);
-        const [fr, fg2, fb] = hexToRgb(fg);
-        doc.setFillColor(br, bg2, bb);
-        doc.roundedRect(cx2 + cw2 * 0.05, cy2 + ch2 * 0.18, cw2 * 0.90, ch2 * 0.64, 0.04, 0.04, 'F');
-        doc.setTextColor(fr, fg2, fb).setFontSize(7.5).setFont('helvetica', 'bold');
-        doc.text(lvl, cell.x + cell.width / 2, cell.y + cell.height / 2 + 0.01, { align: 'center', baseline: 'middle' });
+        if (lvl) drawAlarmPill(doc, data.cell, lvl, '', METHOD_PILL);
       }
     },
   });
@@ -442,8 +446,6 @@ async function generateReport(
     doc.text(noteLines, M, ty + 0.16);
   }
 
-  addFooter(1);
-
   // ─── Page 2: Charts ───────────────────────────────────────────────────────
   doc.addPage();
   addHeader(metricLabel);
@@ -457,68 +459,59 @@ async function generateReport(
   const pieW = Math.min(CW, pieH * 1.0);
   const pieX = M + (CW - pieW) / 2;
   doc.addImage(pieImg, 'PNG', pieX, pieLabelY + 0.15, pieW, pieH - 0.22);
-  addFooter(2);
 
-  // ─── Pages 3+: Data table ─────────────────────────────────────────────────
+  // ─── Pages 3+: Data table (one table; page-breaks only at the bottom) ────
   const colNames = ['#', 'ASSET PATH', 'DATE', 'ALARM', 'RMS', 'MAX RMS', 'PEAK', 'CREST FACTOR'];
   const colWidths = [0.22, 2.38, 0.72, 0.70, 0.62, 0.62, 0.62, 0.72];
-  let pageNum = 3;
+  const tableTitle = `All Equipment — Sorted by Severity & ${metricLabel}`;
 
-  for (let offset = 0; offset < sorted.length; offset += 30) {
-    doc.addPage();
-    const chunk = sorted.slice(offset, offset + 30);
-    const sectionLabel = totalDataPages > 1
-      ? `All Equipment — Sorted by Severity & ${metricLabel}  (${pageNum - 2} / ${totalDataPages})`
-      : `All Equipment — Sorted by Severity & ${metricLabel}`;
-    addHeader(sectionLabel);
+  doc.addPage();
+  autoTable(doc, {
+    head: [colNames],
+    body: sorted.map((r, i) => [
+      String(i + 1), r.label, fmtDate(r.measuredAt), r.alarmLevel + (r.override ? ' *' : ''),
+      fmt(r.rms), fmt(r.maxRms), fmt(r.peak), fmt(r.crest),
+    ]),
+    startY: M + 0.68,
+    margin: { left: M, right: M, top: M + 0.68, bottom: M * 0.7 },
+    showHead: 'everyPage',
+    pageBreak: 'auto',
+    rowPageBreak: 'avoid',
+    styles: { fontSize: 7.5, cellPadding: 0.055, textColor: [29, 29, 31], lineColor: [212, 212, 224], lineWidth: 0.004 },
+    headStyles: { fillColor: [235, 235, 242], textColor: [44, 44, 62], fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: colWidths[0], halign: 'center' },
+      1: { cellWidth: colWidths[1] },
+      2: { cellWidth: colWidths[2], halign: 'center' },
+      3: { cellWidth: colWidths[3], halign: 'center' },
+      4: { cellWidth: colWidths[4], halign: 'center', fontStyle: 'bold' },
+      5: { cellWidth: colWidths[5], halign: 'center' },
+      6: { cellWidth: colWidths[6], halign: 'center' },
+      7: { cellWidth: colWidths[7], halign: 'center' },
+    },
+    alternateRowStyles: { fillColor: [245, 245, 248] },
+    didDrawPage: () => { addHeader(tableTitle); },
+    willDrawCell: (data) => {
+      if (data.column.index === 3 && data.section === 'body') {
+        data.cell.text = [];  // suppress autotable text — pill drawn in didDrawCell
+      }
+    },
+    didDrawCell: (data) => {
+      if (data.column.index === 3 && data.section === 'body') {
+        const raw = String(data.cell.raw ?? '');
+        if (!raw) return;
+        const starred = raw.endsWith(' *');
+        const lvl = starred ? raw.slice(0, -2) : raw;
+        drawAlarmPill(doc, data.cell, lvl, starred ? ' *' : '', TABLE_PILL);
+      }
+    },
+  });
 
-    autoTable(doc, {
-      head: [colNames],
-      body: chunk.map((r, i) => [
-        String(offset + i + 1), r.label, fmtDate(r.measuredAt), r.alarmLevel,
-        fmt(r.rms), fmt(r.maxRms), fmt(r.peak), fmt(r.crest),
-      ]),
-      startY: M + 0.68,
-      margin: { left: M, right: M },
-      styles: { fontSize: 7.5, cellPadding: 0.055, textColor: [29, 29, 31], lineColor: [212, 212, 224], lineWidth: 0.004 },
-      headStyles: { fillColor: [235, 235, 242], textColor: [44, 44, 62], fontStyle: 'bold' },
-      columnStyles: {
-        0: { cellWidth: colWidths[0], halign: 'center' },
-        1: { cellWidth: colWidths[1] },
-        2: { cellWidth: colWidths[2], halign: 'center' },
-        3: { cellWidth: colWidths[3], halign: 'center' },
-        4: { cellWidth: colWidths[4], halign: 'center', fontStyle: 'bold' },
-        5: { cellWidth: colWidths[5], halign: 'center' },
-        6: { cellWidth: colWidths[6], halign: 'center' },
-        7: { cellWidth: colWidths[7], halign: 'center' },
-      },
-      alternateRowStyles: { fillColor: [245, 245, 248] },
-      willDrawCell: (data) => {
-        if (data.column.index === 3 && data.section === 'body') {
-          data.cell.text = [];  // suppress autotable text — pill drawn in didDrawCell
-        }
-      },
-      didDrawCell: (data) => {
-        if (data.column.index === 3 && data.section === 'body') {
-          const row = chunk[data.row.index];
-          const lvl = row?.alarmLevel;
-          if (!lvl) return;
-          const [bg, fg] = ALARM_PILL[lvl] ?? ['#ebebf2', '#3d3d3f'];
-          const cell = data.cell;
-          const [br, bg2, bb] = hexToRgb(bg);
-          const [fr, fg2, fb] = hexToRgb(fg);
-          doc.setFillColor(br, bg2, bb);
-          const pw = cell.width * 0.82, ph = cell.height * 0.58;
-          doc.roundedRect(cell.x + (cell.width - pw) / 2, cell.y + (cell.height - ph) / 2, pw, ph, 0.04, 0.04, 'F');
-          doc.setTextColor(fr, fg2, fb).setFontSize(6.5).setFont('helvetica', 'bold');
-          // Asterisk marks an analyst reclassification — a client must never read
-          // an overridden level as the raw computed one. Legend on page 2.
-          doc.text(lvl + (row.override ? ' *' : ''), cell.x + cell.width / 2, cell.y + cell.height / 2 + 0.008, { align: 'center', baseline: 'middle' });
-        }
-      },
-    });
-
-    addFooter(pageNum++);
+  const totalPages = doc.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal').setFontSize(7.5).setTextColor(150, 150, 160);
+    doc.text(`${i} / ${totalPages}`, PW / 2, PH - M * 0.45, { align: 'center' });
   }
 
   doc.save(`US_Report_${locationName.replace(/\s+/g, '_')}_${fileStamp}.pdf`);
