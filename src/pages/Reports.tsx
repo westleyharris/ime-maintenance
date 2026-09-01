@@ -194,7 +194,18 @@ const TABLE_PILL  = { w: 0.58, h: 0.14, fontSize: 6.5 };
 
 // ── Canvas chart renderers ────────────────────────────────────────────────────
 
-function renderBarChart(chartRows: ReportRow[], metricKey: MetricKey, metricLabel: string): string {
+/**
+ * @param tableRowNumbers pointId → its row number in the report table. The bar
+ *   badges are a cross-reference INTO that table, so a reading the alarm filter
+ *   excluded has no row to point at and is drawn without a badge. Numbering off
+ *   the chart's own index would silently mislabel every bar once a filter is on.
+ */
+function renderBarChart(
+  chartRows: ReportRow[],
+  metricKey: MetricKey,
+  metricLabel: string,
+  tableRowNumbers: Map<string, number>,
+): string {
   const W = 2400, H = 900;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
@@ -253,9 +264,12 @@ function renderBarChart(chartRows: ReportRow[], metricKey: MetricKey, metricLabe
     ctx.roundRect(bx, by, barW, barH, [4, 4, 0, 0]);
     ctx.fill();
 
-    ctx.font = 'bold 16px Arial'; ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(`#${i + 1}`, bx + barW / 2, by + barH - 6);
+    const rowNo = tableRowNumbers.get(row.pointId);
+    if (rowNo != null) {
+      ctx.font = 'bold 16px Arial'; ctx.fillStyle = 'rgba(255,255,255,0.9)';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+      ctx.fillText(`#${rowNo}`, bx + barW / 2, by + barH - 6);
+    }
 
     if (n <= 25) {
       ctx.font = 'bold 20px Arial'; ctx.fillStyle = '#111827';
@@ -367,7 +381,9 @@ async function generateReport(
   // collapse the pie to 100% and the bar chart to a single color.
   const dw = chartSorted.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
 
-  const barImg = renderBarChart(dw, metricKey, metricLabel);
+  // `sorted` is exactly what the data table prints, so its index IS the row number.
+  const tableRowNumbers = new Map(sorted.map((r, i) => [r.pointId, i + 1]));
+  const barImg = renderBarChart(dw, metricKey, metricLabel, tableRowNumbers);
   const pieImg = renderPieChart(chartSorted);
 
   const doc = new jsPDF({ orientation: 'portrait', unit: 'in', format: 'letter' });
@@ -684,6 +700,10 @@ export default function Reports() {
     (a, b) => ALARM_RANK[a.alarmLevel] - ALARM_RANK[b.alarmLevel] || (b[metric] ?? 0) - (a[metric] ?? 0)
   );
 
+  // Row numbers come from sortedRows, the list the PDF table prints — the search
+  // box filters the on-screen table only and never reaches the report.
+  const tableRowNumbers = new Map(sortedRows.map((r, i) => [r.pointId, i + 1]));
+
   const visibleRows = search
     ? sortedRows.filter(r =>
         r.equipment.toLowerCase().includes(search.toLowerCase()) ||
@@ -705,7 +725,7 @@ export default function Reports() {
         setGeneratingChart(false);
         return;
       }
-      const url = renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel);
+      const url = renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel, tableRowNumbers);
       setChartUrl(url);
       const parts = (['Danger', 'Warning', 'Alert', 'Normal'] as const)
         .filter(l => counts[l] > 0).map(l => `${counts[l]} ${l}`);
@@ -717,14 +737,16 @@ export default function Reports() {
     }
   };
 
-  // Auto-refresh chart when metric, line, or period changes (not alarm filter)
+  // Auto-refresh the chart when metric, line, period or ALARM FILTER changes.
+  // The alarm filter leaves the bars themselves untouched, but it changes which
+  // readings have a table row, and therefore the badges.
   useEffect(() => {
     if (!chartUrlRef.current) return;
     const dw = chartSorted.filter(r => r.alarmLevel === 'Danger' || r.alarmLevel === 'Warning');
-    if (dw.length) setChartUrl(renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel));
+    if (dw.length) setChartUrl(renderBarChart(dw, metric, METRICS.find(m => m.key === metric)!.pdfLabel, tableRowNumbers));
     else setChartUrl(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [metric, filterLine, dateFrom, dateTo]);
+  }, [metric, filterLine, dateFrom, dateTo, filterAlarms]);
 
   const handleDownloadPNG = () => {
     if (!chartUrl) return;
