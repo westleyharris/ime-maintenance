@@ -30,6 +30,10 @@ export default function Header() {
   const showLineFilter    = isDashboard && selectedLocationId !== null && lines.length > 1;
 
   const selectedCompany  = companies.find(c => c.id === selectedCompanyId);
+  // Demo data lives in the same production project as real customers, so the
+  // scope picker has to say so plainly — nobody should mistake it for a client
+  // during a live walkthrough.
+  const isDemoCompany    = selectedCompany?.name === 'Demo Company';
   const selectedLocation = locations.find(l => l.id === selectedLocationId);
 
   const toggleLanguage = () => {
@@ -82,6 +86,11 @@ export default function Header() {
                 </select>
               ) : (
                 <span className="text-sm font-semibold text-gray-800">{selectedCompany?.name ?? '…'}</span>
+              )}
+              {isDemoCompany && (
+                <span className="shrink-0 text-[10px] font-bold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-200">
+                  Demo
+                </span>
               )}
             </div>
 
@@ -195,6 +204,11 @@ export default function Header() {
             ) : (
               <span className="text-xs font-semibold text-gray-700 truncate">
                 {selectedCompany?.name ?? '…'}
+              </span>
+            )}
+            {isDemoCompany && (
+              <span className="shrink-0 text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-amber-100 text-amber-700">
+                Demo
               </span>
             )}
           </label>
