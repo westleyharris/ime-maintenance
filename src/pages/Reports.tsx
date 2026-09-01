@@ -98,11 +98,18 @@ const ALARM_BADGE_BG: Record<string, string> = {
   Normal:  'bg-green-50 text-green-700',
 };
 
-const METRICS: { key: MetricKey; label: string; shortLabel: string; pdfLabel: string }[] = [
-  { key: 'rms',    label: 'Overall RMS',  shortLabel: 'US RMS',        pdfLabel: 'US RMS (dBµV)'   },
-  { key: 'maxRms', label: 'Max RMS',      shortLabel: 'Max RMS',       pdfLabel: 'US Max RMS'      },
-  { key: 'peak',   label: 'Peak',         shortLabel: 'Peak',          pdfLabel: 'US Peak'         },
-  { key: 'crest',  label: 'Crest Factor', shortLabel: 'Crest Factor',  pdfLabel: 'US Crest Factor' },
+// Crest factor leads: it is what the alarm cutoffs are derived from, so it is the
+// default plot and the first measurement column everywhere. `get` keeps the
+// on-screen header, the body cells, the PDF table and the CSV in one order —
+// they used to be three hardcoded lists that could drift apart.
+const METRICS: {
+  key: MetricKey; label: string; shortLabel: string; pdfLabel: string; csvLabel: string;
+  get: (r: ReportRow) => number;
+}[] = [
+  { key: 'crest',  label: 'Crest Factor', shortLabel: 'Crest Factor',  pdfLabel: 'US Crest Factor', csvLabel: 'Crest Factor', get: r => r.crest  },
+  { key: 'rms',    label: 'Overall RMS',  shortLabel: 'US RMS',        pdfLabel: 'US RMS (dBµV)',   csvLabel: 'RMS',          get: r => r.rms    },
+  { key: 'maxRms', label: 'Max RMS',      shortLabel: 'Max RMS',       pdfLabel: 'US Max RMS',      csvLabel: 'Max RMS',      get: r => r.maxRms },
+  { key: 'peak',   label: 'Peak',         shortLabel: 'Peak',          pdfLabel: 'US Peak',         csvLabel: 'Peak',         get: r => r.peak   },
 ];
 
 const INTRO_PARAGRAPHS = [
@@ -461,8 +468,10 @@ async function generateReport(
   doc.addImage(pieImg, 'PNG', pieX, pieLabelY + 0.15, pieW, pieH - 0.22);
 
   // ─── Pages 3+: Data table (one table; page-breaks only at the bottom) ────
-  const colNames = ['#', 'ASSET PATH', 'DATE', 'ALARM', 'RMS', 'MAX RMS', 'PEAK', 'CREST FACTOR'];
-  const colWidths = [0.22, 2.38, 0.72, 0.70, 0.62, 0.62, 0.62, 0.72];
+  // Metric columns follow METRICS, so the PDF matches the on-screen table.
+  // Widths still total 2.58in across the four, so the page layout is unchanged.
+  const colNames = ['#', 'ASSET PATH', 'DATE', 'ALARM', ...METRICS.map(m => m.shortLabel.toUpperCase())];
+  const colWidths = [0.22, 2.38, 0.72, 0.70, ...METRICS.map(m => (m.shortLabel.length > 8 ? 0.72 : 0.62))];
   const tableTitle = `All Equipment — Sorted by Severity & ${metricLabel}`;
 
   doc.addPage();
@@ -470,7 +479,7 @@ async function generateReport(
     head: [colNames],
     body: sorted.map((r, i) => [
       String(i + 1), r.label, fmtDate(r.measuredAt), r.alarmLevel + (r.override ? ' *' : ''),
-      fmt(r.rms), fmt(r.maxRms), fmt(r.peak), fmt(r.crest),
+      ...METRICS.map(m => fmt(m.get(r))),
     ]),
     startY: M + 0.68,
     margin: { left: M, right: M, top: M + 0.68, bottom: M * 0.7 },
@@ -484,10 +493,12 @@ async function generateReport(
       1: { cellWidth: colWidths[1] },
       2: { cellWidth: colWidths[2], halign: 'center' },
       3: { cellWidth: colWidths[3], halign: 'center' },
-      4: { cellWidth: colWidths[4], halign: 'center', fontStyle: 'bold' },
-      5: { cellWidth: colWidths[5], halign: 'center' },
-      6: { cellWidth: colWidths[6], halign: 'center' },
-      7: { cellWidth: colWidths[7], halign: 'center' },
+      // Bold whichever metric was plotted, rather than always the 5th column.
+      ...Object.fromEntries(METRICS.map((m, i) => [4 + i, {
+        cellWidth: colWidths[4 + i],
+        halign: 'center' as const,
+        fontStyle: m.key === metricKey ? ('bold' as const) : ('normal' as const),
+      }])),
     },
     alternateRowStyles: { fillColor: [245, 245, 248] },
     didDrawPage: () => { addHeader(tableTitle); },
@@ -539,7 +550,7 @@ export default function Reports() {
   const [chartStatus, setChartStatus]           = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; msg: string }>({ type: 'idle', msg: '' });
   const [generatingChart, setGeneratingChart]   = useState(false);
   const [generatingReport, setGeneratingReport] = useState(false);
-  const [metric, setMetric] = useState<MetricKey>('rms');
+  const [metric, setMetric] = useState<MetricKey>('crest');
   const [search, setSearch] = useState('');
   const [filterLine, setFilterLine]   = useState('');
   const [filterAlarms, setFilterAlarms] = useState<string[]>([]);
@@ -735,9 +746,12 @@ export default function Reports() {
   };
 
   const exportCSV = () => {
-    const headers = ['Line', 'Section', 'Equipment', 'Component', 'Point', 'RMS', 'Max RMS', 'Peak', 'Crest Factor', 'Alarm Level', 'Computed Level', 'Override Reason', 'Overridden By', 'Date'];
+    const headers = ['Line', 'Section', 'Equipment', 'Component', 'Point',
+      ...METRICS.map(m => m.csvLabel),
+      'Alarm Level', 'Computed Level', 'Override Reason', 'Overridden By', 'Date'];
     const csvRows = sortedRows.map(r =>
-      [r.line, r.section, r.equipment, r.component, r.point, r.rms, r.maxRms, r.peak, r.crest, r.alarmLevel,
+      [r.line, r.section, r.equipment, r.component, r.point,
+       ...METRICS.map(m => m.get(r)), r.alarmLevel,
        r.override?.computed ?? '', r.override?.reason ?? '', r.override?.by ?? '', fmtDate(r.measuredAt)]
         // Escape embedded quotes — an override reason is free text.
         .map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')
@@ -1074,10 +1088,13 @@ export default function Reports() {
                             {row.alarmLevel}{row.override && ' *'}
                           </span>
                         </td>
-                        <td className={`px-3 py-2.5 text-center tabular-nums text-xs ${metric === 'rms'    ? 'font-bold text-gray-900' : 'text-gray-400'}`}>{fmt(row.rms)}</td>
-                        <td className={`px-3 py-2.5 text-center tabular-nums text-xs ${metric === 'maxRms' ? 'font-bold text-gray-900' : 'text-gray-400'}`}>{fmt(row.maxRms)}</td>
-                        <td className={`px-3 py-2.5 text-center tabular-nums text-xs ${metric === 'peak'   ? 'font-bold text-gray-900' : 'text-gray-400'}`}>{fmt(row.peak)}</td>
-                        <td className={`px-3 py-2.5 text-center tabular-nums text-xs ${metric === 'crest'  ? 'font-bold text-gray-900' : 'text-gray-400'}`}>{fmt(row.crest)}</td>
+                        {METRICS.map(m => (
+                          <td key={m.key}
+                            className={`px-3 py-2.5 text-center tabular-nums text-xs ${
+                              metric === m.key ? 'font-bold text-gray-900' : 'text-gray-400'}`}>
+                            {fmt(m.get(row))}
+                          </td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
