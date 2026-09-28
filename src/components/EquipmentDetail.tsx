@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X, Pencil, Check } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
+import { useAuth } from '../context/AuthContext';
 import { ALARM_COLUMNS, overrideSummary, withEffectiveAlarm, type AlarmOverride } from '../utils/alarm';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -124,34 +125,96 @@ function TabBtn({ active, label, count, onClick }: { active: boolean; label: str
 
 // ── Overview tab ─────────────────────────────────────────────────────────────
 
-function OverviewTab({ info, onImageUpload, uploading, isCompliant, neverMeasured }: {
+/**
+ * Editable identity/spec fields, declared once so the read view and the edit
+ * form can never drift apart.
+ *
+ * Deliberately NOT editable here:
+ *  - `tag` and the hierarchy, which the UAS3 sync owns and would overwrite
+ *  - `status`, which has its own panel below with its required status note
+ *  - `image_url`, which has its own upload control
+ *  - `last_replaced_at`, which the replacement flow sets
+ */
+type EditableKey =
+  | 'display_name' | 'asset_type' | 'manufacturer' | 'model' | 'serial_number'
+  | 'installation_date' | 'location_notes'
+  | 'spec_rated_power' | 'spec_rated_speed' | 'spec_flow_rate'
+  | 'spec_pressure' | 'spec_temperature' | 'spec_weight';
+
+const MAIN_FIELDS: { key: EditableKey; label: string; type?: 'date'; ph: string }[] = [
+  { key: 'display_name',      label: 'Display Name',      ph: 'e.g. Main Feed Pump' },
+  { key: 'asset_type',        label: 'Asset Type',        ph: 'e.g. Pump, Motor, Gearbox' },
+  { key: 'manufacturer',      label: 'Manufacturer',      ph: 'e.g. ABB, Siemens' },
+  { key: 'model',             label: 'Model',             ph: 'e.g. M3BP 55kW' },
+  { key: 'serial_number',     label: 'Serial Number',     ph: 'e.g. SN-2024-0142' },
+  { key: 'installation_date', label: 'Installation Date', ph: '', type: 'date' },
+  { key: 'location_notes',    label: 'Location Notes',    ph: 'e.g. North wall, above walkway' },
+];
+
+const SPEC_FIELDS: { key: EditableKey; label: string; ph: string }[] = [
+  { key: 'spec_rated_power', label: 'Rated Power', ph: 'e.g. 55 kW' },
+  { key: 'spec_rated_speed', label: 'Rated Speed', ph: 'e.g. 1480 RPM' },
+  { key: 'spec_flow_rate',   label: 'Flow Rate',   ph: 'e.g. 120 m³/h' },
+  { key: 'spec_pressure',    label: 'Pressure',    ph: 'e.g. 6 bar' },
+  { key: 'spec_temperature', label: 'Temperature', ph: 'e.g. 80°C max' },
+  { key: 'spec_weight',      label: 'Weight',      ph: 'e.g. 320 kg' },
+];
+
+type EditDraft = Record<EditableKey, string>;
+
+const draftFrom = (info: EquipmentInfo | null): EditDraft =>
+  Object.fromEntries(
+    [...MAIN_FIELDS, ...SPEC_FIELDS].map(f => [f.key, (info?.[f.key] as string | null) ?? '']),
+  ) as EditDraft;
+
+function OverviewTab({ info, onImageUpload, uploading, isCompliant, neverMeasured, canEdit, onSaveDetails }: {
   info: EquipmentInfo | null;
   onImageUpload: (file: File) => void;
   uploading: boolean;
   isCompliant: boolean;
   neverMeasured: boolean;
+  canEdit: boolean;
+  onSaveDetails: (patch: Partial<Record<EditableKey, string | null>>) => Promise<void>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const dash = (v: string | null | undefined) => v || '—';
 
-  const mainFields = [
-    { label: 'Asset Type',        value: dash(info?.asset_type) },
-    { label: 'Manufacturer',      value: dash(info?.manufacturer) },
-    { label: 'Model',             value: dash(info?.model) },
-    { label: 'Serial Number',     value: dash(info?.serial_number) },
-    { label: 'Installation Date', value: fmtDate(info?.installation_date ?? null) },
-    { label: 'Status',            value: info?.status ?? 'active', isStatus: true },
-    { label: 'Location Notes',    value: dash(info?.location_notes) },
-  ];
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState<EditDraft>(() => draftFrom(info));
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState<string | null>(null);
 
-  const specFields = [
-    { label: 'Rated Power',   value: dash(info?.spec_rated_power) },
-    { label: 'Rated Speed',   value: dash(info?.spec_rated_speed) },
-    { label: 'Flow Rate',     value: dash(info?.spec_flow_rate) },
-    { label: 'Pressure',      value: dash(info?.spec_pressure) },
-    { label: 'Temperature',   value: dash(info?.spec_temperature) },
-    { label: 'Weight',        value: dash(info?.spec_weight) },
-  ];
+  function startEdit() { setDraft(draftFrom(info)); setError(null); setEditing(true); }
+
+  async function save() {
+    setSaving(true); setError(null);
+    // Only send what actually changed, and turn a cleared box back into NULL so
+    // the field reads as "—" again rather than an empty string.
+    const patch: Partial<Record<EditableKey, string | null>> = {};
+    for (const f of [...MAIN_FIELDS, ...SPEC_FIELDS]) {
+      const next = draft[f.key].trim();
+      const prev = (info?.[f.key] as string | null) ?? '';
+      if (next !== prev) patch[f.key] = next === '' ? null : next;
+    }
+    if (!Object.keys(patch).length) { setSaving(false); setEditing(false); return; }
+    try {
+      await onSaveDetails(patch);
+      setEditing(false);
+    } catch (e) {
+      setError((e as Error).message ?? 'Could not save changes.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const inputCls = 'w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 placeholder:text-gray-300 disabled:opacity-50';
+
+  const mainFields = MAIN_FIELDS.map(f => ({
+    label: f.label,
+    value: f.type === 'date' ? fmtDate(info?.installation_date ?? null) : dash(info?.[f.key] as string | null),
+  }));
+
+  const specFields = SPEC_FIELDS.map(f => ({ label: f.label, value: dash(info?.[f.key] as string | null) }));
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -192,20 +255,69 @@ function OverviewTab({ info, onImageUpload, uploading, isCompliant, neverMeasure
 
         {/* Details */}
         <div className="flex-1 p-6 space-y-6">
+          {/* Edit controls — IME admins only; everyone else sees a read-only card */}
+          {canEdit && (
+            <div className="flex items-center justify-end gap-2 -mb-2">
+              {editing ? (
+                <>
+                  <button onClick={() => setEditing(false)} disabled={saving}
+                    className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                    Cancel
+                  </button>
+                  <button onClick={save} disabled={saving}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold disabled:opacity-60">
+                    {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                    {saving ? 'Saving…' : 'Save changes'}
+                  </button>
+                </>
+              ) : (
+                <button onClick={startEdit}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors">
+                  <Pencil size={12} /> Edit details
+                </button>
+              )}
+            </div>
+          )}
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs font-semibold text-red-700">Could not save</p>
+              <p className="text-[11px] text-red-600 mt-0.5">{error}</p>
+            </div>
+          )}
+
           {/* Main fields */}
           <div className="grid grid-cols-2 gap-x-10 gap-y-4">
-            {mainFields.map(f => (
-              <div key={f.label}>
-                <p className="text-xs text-gray-400 mb-0.5">{f.label}</p>
-                {f.isStatus ? (
-                  <span className={`inline-flex text-xs font-semibold px-2 py-0.5 rounded-full ${
-                    f.value === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
-                  }`}>{f.value}</span>
-                ) : (
-                  <p className="text-sm font-semibold text-gray-900">{f.value}</p>
-                )}
-              </div>
-            ))}
+            {editing
+              ? MAIN_FIELDS.map(f => (
+                  <div key={f.key}>
+                    <label className="text-xs text-gray-400 mb-0.5 block">{f.label}</label>
+                    <input
+                      type={f.type === 'date' ? 'date' : 'text'}
+                      value={draft[f.key]}
+                      placeholder={f.ph}
+                      disabled={saving}
+                      onChange={e => setDraft(d => ({ ...d, [f.key]: e.target.value }))}
+                      className={inputCls}
+                    />
+                  </div>
+                ))
+              : mainFields.map(f => (
+                  <div key={f.label}>
+                    <p className="text-xs text-gray-400 mb-0.5">{f.label}</p>
+                    <p className="text-sm font-semibold text-gray-900">{f.value}</p>
+                  </div>
+                ))}
+
+            {/* Status stays read-only here — it is owned by the panel below, which
+                also captures the status note that a change requires. */}
+            <div>
+              <p className="text-xs text-gray-400 mb-0.5">Status</p>
+              <span className={`inline-flex text-xs font-semibold px-2 py-0.5 rounded-full ${
+                (info?.status ?? 'active') === 'active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
+              }`}>{info?.status ?? 'active'}</span>
+            </div>
+
             {/* Compliance badge */}
             <div>
               <p className="text-xs text-gray-400 mb-0.5">Route Compliance</p>
@@ -220,12 +332,21 @@ function OverviewTab({ info, onImageUpload, uploading, isCompliant, neverMeasure
           <div>
             <p className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-3">Technical Specifications</p>
             <div className="grid grid-cols-3 gap-x-8 gap-y-3 bg-gray-50 rounded-xl p-4">
-              {specFields.map(f => (
-                <div key={f.label}>
-                  <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">{f.label}</p>
-                  <p className="text-sm font-semibold text-gray-800">{f.value}</p>
-                </div>
-              ))}
+              {editing
+                ? SPEC_FIELDS.map(f => (
+                    <div key={f.key}>
+                      <label className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5 block">{f.label}</label>
+                      <input value={draft[f.key]} placeholder={f.ph} disabled={saving}
+                        onChange={e => setDraft(d => ({ ...d, [f.key]: e.target.value }))}
+                        className={inputCls + ' bg-white'} />
+                    </div>
+                  ))
+                : specFields.map(f => (
+                    <div key={f.label}>
+                      <p className="text-[10px] text-gray-400 uppercase tracking-wide mb-0.5">{f.label}</p>
+                      <p className="text-sm font-semibold text-gray-800">{f.value}</p>
+                    </div>
+                  ))}
             </div>
           </div>
         </div>
@@ -1505,6 +1626,19 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
     setShowReplaceModal(false);
   }
 
+  const { profile } = useAuth();
+  // Asset identity and specs are IME's record of the equipment, so only IME
+  // analysts may change them. RLS still lets a company_admin PATCH the row
+  // directly — see the note in the PR/handover about enforcing this in the DB.
+  const canEditDetails = profile?.role === 'ime_admin';
+
+  /** Persist an Overview edit and reflect it locally without a refetch. */
+  const handleSaveDetails = async (patch: Record<string, string | null>) => {
+    const { error } = await supabase.from('equipment').update(patch).eq('id', equipmentId);
+    if (error) throw new Error(error.message);
+    setInfo(prev => (prev ? { ...prev, ...patch } as EquipmentInfo : prev));
+  };
+
   const handleImageUpload = async (file: File) => {
     setUploading(true);
     try {
@@ -1723,7 +1857,9 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         <>
           {activeTab === 'overview' && (
             <div className="space-y-4">
-              <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading} isCompliant={isCompliant} neverMeasured={neverMeasured} />
+              <OverviewTab info={info} onImageUpload={handleImageUpload} uploading={uploading}
+                isCompliant={isCompliant} neverMeasured={neverMeasured}
+                canEdit={canEditDetails} onSaveDetails={handleSaveDetails} />
               {priorReplacementNote && (
                 <PriorAssetCard note={priorReplacementNote} />
               )}
