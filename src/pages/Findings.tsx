@@ -28,6 +28,9 @@ interface FindingRow {
   workOrderId: string | null;
   woNumber: string | null;
   notifiedAt: string | null;
+  notifiedByName: string | null;
+  recommendationByName: string | null;
+  recommendationAt: string | null;
   locationId: string | null;
   line: string;
   section: string;
@@ -40,6 +43,9 @@ interface RawFinding {
   condition: Condition;
   finding: string | null;
   recommendation: string | null;
+  recommendation_by_name: string | null;
+  recommendation_at: string | null;
+  notified_by_name: string | null;
   generated_tag: string | null;
   sap_no: string | null;
   wo_text: string | null;
@@ -99,6 +105,9 @@ function flatten(f: RawFinding, woNumber: string | null): FindingRow {
     workOrderId: f.work_order_id,
     woNumber,
     notifiedAt: f.notified_at,
+    notifiedByName: f.notified_by_name ?? null,
+    recommendationByName: f.recommendation_by_name ?? null,
+    recommendationAt: f.recommendation_at ?? null,
     locationId: f.location_id,
     line: sec?.lines?.name ?? '—',
     section: sec?.uas_name ?? '—',
@@ -151,6 +160,7 @@ export default function Findings() {
       .select(`
         id, condition, finding, recommendation, generated_tag, sap_no, wo_text,
         bearings_info, comments, creation_date, status, work_order_id, notified_at, location_id, equipment_id,
+        recommendation_by_name, recommendation_at, notified_by_name,
         equipment ( id, tag, sections ( uas_name, lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId);
@@ -341,6 +351,11 @@ export default function Findings() {
 
                 <p className="text-xs text-gray-600 mt-2 line-clamp-2">
                   {r.recommendation || <span className="text-gray-300 italic">No recommendation yet</span>}
+                  {r.recommendation && r.recommendationByName && (
+                    <span className="block text-[10px] text-gray-400 mt-0.5">
+                      by {r.recommendationByName}{r.recommendationAt ? ` · ${fmtDate(r.recommendationAt)}` : ''}
+                    </span>
+                  )}
                 </p>
 
                 <div className="flex items-center gap-2 mt-2.5 flex-wrap">
@@ -424,6 +439,9 @@ export default function Findings() {
                   </td>
                   <td className="px-3 py-2.5 text-gray-500 max-w-[220px] truncate">
                     {r.recommendation || <span className="text-gray-300 italic">— none —</span>}
+                    {r.recommendation && r.recommendationByName && (
+                      <span className="block text-[10px] text-gray-400 mt-0.5">by {r.recommendationByName}</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 font-mono text-xs text-gray-500">{r.generatedTag ?? '—'}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">
@@ -433,8 +451,8 @@ export default function Findings() {
                   <td className="px-3 py-2.5">
                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[r.status]}`}>{STATUS_LABEL[r.status]}</span>
                     {r.notifiedAt && (
-                      <span className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5" title={`Notified ${fmtDate(r.notifiedAt)}`}>
-                        <BellRing size={10} /> Notified {fmtDate(r.notifiedAt)}
+                      <span className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5" title={`Notified ${fmtDate(r.notifiedAt)}${r.notifiedByName ? ` by ${r.notifiedByName}` : ''}`}>
+                        <BellRing size={10} /> Notified {fmtDate(r.notifiedAt)}{r.notifiedByName ? ` by ${r.notifiedByName}` : ''}
                       </span>
                     )}
                   </td>

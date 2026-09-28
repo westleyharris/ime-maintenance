@@ -22,6 +22,12 @@ interface WORow {
   recommendation: string | null;
   dueDate: string | null;
   createdAt: string;
+  createdByName: string | null;
+  statusChangedByName: string | null;
+  statusChangedAt: string | null;
+  closedByName: string | null;
+  closedAt: string | null;
+  cmmsSetByName: string | null;
   findingId: string | null;
   equipment: string;
   line: string;
@@ -42,6 +48,12 @@ interface RawWO {
   recommendation: string | null;
   due_date: string | null;
   created_at: string;
+  created_by_name: string | null;
+  status_changed_by_name: string | null;
+  status_changed_at: string | null;
+  closed_by_name: string | null;
+  closed_at: string | null;
+  cmms_set_by_name: string | null;
   finding_id: string | null;
   equipment: { tag: string; sections: { lines: { name: string } } | null } | null;
 }
@@ -110,6 +122,7 @@ export default function WorkOrders() {
   const isAdmin = profile?.role === 'ime_admin';
   // company_admin / plant_manager can also manage WOs; RLS enforces their scope.
   const canManage = isAdmin || profile?.role === 'company_admin' || profile?.role === 'plant_manager';
+  const actorName = profile?.full_name?.trim() || profile?.email || null;
 
   const [rows, setRows] = useState<WORow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -126,6 +139,7 @@ export default function WorkOrders() {
       .from('work_orders')
       .select(`
         id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, close_note, recommendation, due_date, created_at, finding_id,
+        created_by_name, status_changed_by_name, status_changed_at, closed_by_name, closed_at, cmms_set_by_name,
         equipment ( tag, sections ( lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId)
@@ -144,6 +158,12 @@ export default function WorkOrders() {
     const flat: WORow[] = ((data ?? []) as unknown as RawWO[]).map(w => ({
       id: w.id, woNumber: w.wo_number, title: w.title, description: w.description,
       priority: w.priority, status: w.status, assignee: w.assignee, sapNo: w.sap_no,
+      createdByName: w.created_by_name ?? null,
+      statusChangedByName: w.status_changed_by_name ?? null,
+      statusChangedAt: w.status_changed_at ?? null,
+      closedByName: w.closed_by_name ?? null,
+      closedAt: w.closed_at ?? null,
+      cmmsSetByName: w.cmms_set_by_name ?? null,
       cmmsWoNo: w.cmms_wo_no, closeNote: w.close_note, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
       equipment: w.equipment?.tag ?? '—',
       line: w.equipment?.sections?.lines?.name ?? '—',
@@ -167,7 +187,11 @@ export default function WorkOrders() {
       return;
     }
     await supabase.from('work_orders').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
-    setRows(rs => rs.map(r => r.id === id ? { ...r, status } : r));
+    // The trigger is the source of truth; mirror it locally so the modal shows
+    // the attribution straight away instead of waiting for a refetch.
+    setRows(rs => rs.map(r => r.id === id
+      ? { ...r, status, statusChangedByName: actorName, statusChangedAt: new Date().toISOString() }
+      : r));
   };
 
   const confirmClose = async (id: string, note: string) => {
@@ -176,7 +200,11 @@ export default function WorkOrders() {
       close_note: note,
       updated_at: new Date().toISOString(),
     }).eq('id', id);
-    setRows(rs => rs.map(r => r.id === id ? { ...r, status: 'closed' as WOStatus, closeNote: note } : r));
+    setRows(rs => rs.map(r => r.id === id
+      ? { ...r, status: 'closed' as WOStatus, closeNote: note,
+          statusChangedByName: actorName, statusChangedAt: new Date().toISOString(),
+          closedByName: actorName, closedAt: new Date().toISOString() }
+      : r));
     setClosingWO(null);
   };
 
@@ -184,7 +212,9 @@ export default function WorkOrders() {
   const updateCmms = async (id: string, value: string) => {
     const cmms = value.trim() || null;
     await supabase.from('work_orders').update({ cmms_wo_no: cmms, updated_at: new Date().toISOString() }).eq('id', id);
-    setRows(rs => rs.map(r => r.id === id ? { ...r, cmmsWoNo: cmms } : r));
+    setRows(rs => rs.map(r => r.id === id
+      ? { ...r, cmmsWoNo: cmms, cmmsSetByName: cmms ? actorName : null }
+      : r));
   };
 
   const remove = async (id: string, findingId: string | null) => {
@@ -450,16 +480,25 @@ export default function WorkOrders() {
 
 function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
   const rows: [string, React.ReactNode][] = [
-    ['CMMS WO #', wo.cmmsWoNo ?? '—'],
+    ['CMMS WO #', wo.cmmsWoNo
+      ? <>{wo.cmmsWoNo}{wo.cmmsSetByName && <span className="block text-[10px] text-gray-400">entered by {wo.cmmsSetByName}</span>}</>
+      : '—'],
     ['Asset', <span className="font-mono font-semibold text-gray-800">{wo.equipment}</span>],
     ['Area', wo.line],
     ['Finding', wo.findingCondition ?? '—'],
     ['Priority', <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${PRIORITY_BADGE[wo.priority]}`}>{wo.priority}</span>],
-    ['Status', <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[wo.status]}`}>{STATUS_LABEL[wo.status]}</span>],
+    ['Status', <>
+      <span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${STATUS_BADGE[wo.status]}`}>{STATUS_LABEL[wo.status]}</span>
+      {wo.statusChangedByName && (
+        <span className="block text-[10px] text-gray-400 mt-0.5">
+          changed by {wo.statusChangedByName}{wo.statusChangedAt ? ` · ${fmtDate(wo.statusChangedAt)}` : ''}
+        </span>
+      )}
+    </>],
     ['Assignee', wo.assignee ?? '—'],
     ['SAP No.', wo.sapNo ?? '—'],
     ['Due date', fmtDate(wo.dueDate)],
-    ['Created', fmtDate(wo.createdAt)],
+    ['Created', <>{fmtDate(wo.createdAt)}{wo.createdByName && <span className="block text-[10px] text-gray-400">by {wo.createdByName}</span>}</>],
   ];
 
   return (
@@ -497,7 +536,14 @@ function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
 
           {wo.status === 'closed' && wo.closeNote && (
             <div>
-              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">Closing note</p>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                Closing note
+                {wo.closedByName && (
+                  <span className="font-normal normal-case tracking-normal text-gray-400">
+                    {' '}— closed by {wo.closedByName}{wo.closedAt ? ` on ${fmtDate(wo.closedAt)}` : ''}
+                  </span>
+                )}
+              </p>
               <p className="text-sm text-gray-700 rounded-lg bg-green-50 border border-green-100 px-3 py-2">{wo.closeNote}</p>
             </div>
           )}

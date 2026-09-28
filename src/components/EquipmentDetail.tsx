@@ -36,6 +36,9 @@ interface EquipmentNote {
   message: string | null;
   metadata: Record<string, unknown> | null;
   created_at: string;
+  /** Stamped by trigger from auth.uid(); null for sync/seed-written rows. */
+  actor_id: string | null;
+  actor_name: string | null;
 }
 
 interface Measurement {
@@ -121,6 +124,36 @@ function TabBtn({ active, label, count, onClick }: { active: boolean; label: str
       )}
     </button>
   );
+}
+
+
+// ── When does the CURRENT asset's history begin? ─────────────────────────────
+//
+// A replacement is recorded in the platform days or weeks after the unit was
+// physically swapped, so the record time is the wrong boundary: readings taken
+// in that gap came from the NEW asset but were being filed under the old one.
+// The installation date is what actually separates the two units.
+//
+// Only meaningful once a replacement has been recorded. An asset that has never
+// been replaced owns its entire history regardless of its installation date —
+// otherwise every asset with a back-dated install date would silently archive
+// readings that predate it.
+//
+// Falls back to the replacement record time when no installation date is set,
+// which is exactly the old behaviour (inclusive of the record day).
+interface AssetSince { date: string; inclusive: boolean }
+
+function currentAssetSince(info: EquipmentInfo | null): AssetSince | null {
+  if (!info?.last_replaced_at) return null;
+  if (info.installation_date) return { date: info.installation_date.slice(0, 10), inclusive: false };
+  return { date: info.last_replaced_at.slice(0, 10), inclusive: true };
+}
+
+/** True when a reading belongs to the unit that was replaced, not the current one. */
+function isPriorAsset(measuredAt: string | null | undefined, since: AssetSince | null): boolean {
+  if (!since || !measuredAt) return false;
+  const d = measuredAt.slice(0, 10);
+  return since.inclusive ? d <= since.date : d < since.date;
 }
 
 // ── Overview tab ─────────────────────────────────────────────────────────────
@@ -427,11 +460,8 @@ function AssetHealthTab({ components, notes, info }: {
 
   const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
 
-  // Find the most recent replacement date (if any) to determine archived boundary
-  const replacementNote = notes.find(n => n.note_type === 'replacement');
-  const replacedDate = replacementNote
-    ? ((replacementNote.metadata?.replaced_at as string | null) ?? replacementNote.created_at).slice(0, 10)
-    : null;
+  // Boundary between the prior asset and the current one — see currentAssetSince.
+  const since = currentAssetSince(info);
 
   const allEntries: HealthTimelineEntry[] = [
     ...Array.from(byDate.entries()).map(([date, d]) => ({ kind: 'measurement' as const, date, ...d })),
@@ -470,11 +500,9 @@ function AssetHealthTab({ components, notes, info }: {
   const entries = allEntries.slice(0, visibleCount);
   const hasMore = visibleCount < allEntries.length;
 
-  // A measurement entry is archived if it falls on or before the replacement date
+  // A measurement entry is archived when it predates the current asset.
   const isArchived = (entry: HealthTimelineEntry) =>
-    replacedDate !== null &&
-    entry.kind === 'measurement' &&
-    entry.date <= replacedDate;
+    entry.kind === 'measurement' && isPriorAsset(entry.date, since);
 
   const dash = (v: string | null | undefined) => v || '—';
   const infoFields = [
@@ -492,14 +520,13 @@ function AssetHealthTab({ components, notes, info }: {
     level === 'Alert' ? 'bg-blue-400' :
     'bg-green-500';
 
-  // ── KPI computations (post-replacement only) ──────────────────────────────
-  const replacedTs = info?.last_replaced_at ? new Date(info.last_replaced_at).getTime() : null;
+  // ── KPI computations (current asset only) ─────────────────────────────────
   // Latest reading per measurement point, so "Total Readings" counts points with
   // data (not the full history) and the breakdown reflects each point's current state.
   const kpiMeas: typeof allMeas = [];
   for (const comp of components) {
     for (const mp of (comp.measurement_points ?? [])) {
-      const ms = (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at + 'T12:00:00').getTime() > replacedTs);
+      const ms = (mp.measurements ?? []).filter(m => !isPriorAsset(m.measured_at, since));
       if (ms.length) kpiMeas.push(ms.reduce((a, b) => (a.measured_at >= b.measured_at ? a : b)));
     }
   }
@@ -909,10 +936,10 @@ function fmtDuration(ms: number) {
   return `${Math.max(1, Math.round(ms / 60_000))}m`;
 }
 
-function KPIsTab({ components, status, lastReplacedAt, equipmentId }: {
+function KPIsTab({ components, status, since, equipmentId }: {
   components: ComponentData[];
   status: string | null;
-  lastReplacedAt: string | null;
+  since: AssetSince | null;
   equipmentId: string;
 }) {
   // Work-order derived KPIs: open backlog + mean notification→WO time, plus the
@@ -943,10 +970,10 @@ function KPIsTab({ components, status, lastReplacedAt, equipmentId }: {
     })();
   }, [equipmentId]);
 
-  const replacedTs = lastReplacedAt ? new Date(lastReplacedAt).getTime() : null;
+
   // Latest reading per point (current per-point status, not the full history)
   const latestMeas = components.flatMap(c => (c.measurement_points ?? []).map(mp => {
-    const ms = (mp.measurements ?? []).filter(m => !replacedTs || new Date(m.measured_at).getTime() > replacedTs);
+    const ms = (mp.measurements ?? []).filter(m => !isPriorAsset(m.measured_at, since));
     return ms.length ? ms.reduce((a, b) => (a.measured_at >= b.measured_at ? a : b)) : null;
   })).filter((m): m is NonNullable<typeof m> => m !== null);
   const dangerCount  = latestMeas.filter(m => m.alarm_level === 'Danger').length;
@@ -1183,7 +1210,9 @@ function ActivityLog({ notes }: { notes: EquipmentNote[] }) {
                         : n.note_type === 'status_change' ? 'Status Changed'
                         : 'Note'}
                     </p>
-                    <span className="text-xs text-gray-400 shrink-0">{fmtDate(n.created_at)}</span>
+                    <span className="text-xs text-gray-400 shrink-0">
+                      {n.actor_name ? `${n.actor_name} · ` : ''}{fmtDate(n.created_at)}
+                    </span>
                   </div>
                   {n.message && <p className="text-sm text-gray-700 mt-1">{n.message}</p>}
                   {priorSpecs && (
@@ -1594,7 +1623,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
   async function loadNotes() {
     const { data } = await supabase
       .from('equipment_notes')
-      .select('id, note_type, message, metadata, created_at')
+      .select('id, note_type, message, metadata, created_at, actor_id, actor_name')
       .eq('equipment_id', equipmentId)
       .order('created_at', { ascending: false });
     setNotes((data ?? []) as EquipmentNote[]);
@@ -1733,7 +1762,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         // Load activity log (non-blocking)
         supabase
           .from('equipment_notes')
-          .select('id, note_type, message, metadata, created_at')
+          .select('id, note_type, message, metadata, created_at, actor_id, actor_name')
           .eq('equipment_id', equipmentId)
           .order('created_at', { ascending: false })
           .then(({ data }) => setNotes((data ?? []) as EquipmentNote[]));
@@ -1769,14 +1798,14 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
   const allMeas = components.flatMap(c => (c.measurement_points ?? []).flatMap(mp => mp.measurements ?? []));
 
   // Use only post-replacement measurements for current status indicators
-  const replacedTs   = info?.last_replaced_at ? new Date(info.last_replaced_at).getTime() : null;
-  const currentMeas  = replacedTs ? allMeas.filter(m => new Date(m.measured_at).getTime() > replacedTs) : allMeas;
+  const assetSince   = currentAssetSince(info);
+  const currentMeas  = allMeas.filter(m => !isPriorAsset(m.measured_at, assetSince));
   const worstAlarm   = currentMeas.reduce((w, m) => ALARM_RANK[m.alarm_level] > ALARM_RANK[w] ? m.alarm_level : w, 'Normal');
   const cfg          = A(worstAlarm);
 
   // Current (post-replacement) findings for tab badge
-  const currentFindings = replacedTs
-    ? findings.filter(f => new Date(f.measuredAt).getTime() > replacedTs)
+  const currentFindings = assetSince
+    ? findings.filter(f => !isPriorAsset(f.measuredAt, assetSince))
     : findings;
 
   // Route compliance based on current measurements only.
@@ -1877,7 +1906,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
           )}
           {activeTab === 'workorders'   && <WorkOrdersTab equipmentId={equipmentId} />}
           {activeTab === 'kpis' && (
-            <KPIsTab components={components} status={info?.status ?? null} lastReplacedAt={info?.last_replaced_at ?? null} equipmentId={equipmentId} />
+            <KPIsTab components={components} status={info?.status ?? null} since={currentAssetSince(info)} equipmentId={equipmentId} />
           )}
           {activeTab === 'qr'       && <QRTab tag={equipmentTag} displayName={info?.display_name ?? null} />}
         </>
@@ -1942,7 +1971,7 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
 
         const notesRes = await supabase
           .from('equipment_notes')
-          .select('id, note_type, message, metadata, created_at')
+          .select('id, note_type, message, metadata, created_at, actor_id, actor_name')
           .eq('equipment_id', equipmentId)
           .order('created_at', { ascending: false });
 

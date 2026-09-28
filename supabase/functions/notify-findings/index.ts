@@ -127,10 +127,17 @@ Deno.serve(async (req) => {
     })
     await client.close()
 
-    // ── KPI stamp: first notification time only (never overwritten) ───────────
+    // ── KPI stamp: first notification only (never overwritten) ────────────────
+    // Attributed here rather than by trigger: this runs on the service role, so
+    // auth.uid() is null and the DB cannot tell who sent it. The caller is
+    // already verified as an ime_admin above.
     await admin
       .from('findings')
-      .update({ notified_at: new Date().toISOString() })
+      .update({
+        notified_at:      new Date().toISOString(),
+        notified_by:      user.id,
+        notified_by_name: senderName,
+      })
       .in('id', findingIds)
       .is('notified_at', null)
 
