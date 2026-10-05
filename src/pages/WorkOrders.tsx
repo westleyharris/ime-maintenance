@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Loader2, Trash2, Building2, ClipboardList, Download, X } from 'lucide-react';
+import { Loader2, Trash2, Building2, ClipboardList, Download, X, Pencil, Check } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useScope } from '../context/ScopeContext';
 import { useAuth } from '../context/AuthContext';
@@ -28,6 +28,8 @@ interface WORow {
   closedByName: string | null;
   closedAt: string | null;
   cmmsSetByName: string | null;
+  editedByName: string | null;
+  editedAt: string | null;
   findingId: string | null;
   equipment: string;
   line: string;
@@ -54,6 +56,8 @@ interface RawWO {
   closed_by_name: string | null;
   closed_at: string | null;
   cmms_set_by_name: string | null;
+  edited_by_name: string | null;
+  edited_at: string | null;
   finding_id: string | null;
   equipment: { tag: string; sections: { lines: { name: string } } | null } | null;
 }
@@ -140,6 +144,7 @@ export default function WorkOrders() {
       .select(`
         id, wo_number, title, description, priority, status, assignee, sap_no, cmms_wo_no, close_note, recommendation, due_date, created_at, finding_id,
         created_by_name, status_changed_by_name, status_changed_at, closed_by_name, closed_at, cmms_set_by_name,
+        edited_by_name, edited_at,
         equipment ( tag, sections ( lines ( name ) ) )
       `)
       .eq('company_id', selectedCompanyId)
@@ -164,6 +169,8 @@ export default function WorkOrders() {
       closedByName: w.closed_by_name ?? null,
       closedAt: w.closed_at ?? null,
       cmmsSetByName: w.cmms_set_by_name ?? null,
+      editedByName: w.edited_by_name ?? null,
+      editedAt: w.edited_at ?? null,
       cmmsWoNo: w.cmms_wo_no, closeNote: w.close_note, dueDate: w.due_date, createdAt: w.created_at, findingId: w.finding_id,
       equipment: w.equipment?.tag ?? '—',
       line: w.equipment?.sections?.lines?.name ?? '—',
@@ -215,6 +222,32 @@ export default function WorkOrders() {
     setRows(rs => rs.map(r => r.id === id
       ? { ...r, cmmsWoNo: cmms, cmmsSetByName: cmms ? actorName : null }
       : r));
+  };
+
+  /**
+   * IME-admin correction of an existing work order. The trigger stamps
+   * edited_by/at server-side; mirroring the values locally keeps the modal and
+   * the table in step without a refetch.
+   */
+  const saveWorkOrder = async (id: string, patch: Record<string, string | null>) => {
+    const { error } = await supabase.from('work_orders')
+      .update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) throw new Error(error.message);
+    const now = new Date().toISOString();
+    const apply = (r: WORow): WORow => ({
+      ...r,
+      title:          patch.title          !== undefined ? patch.title          : r.title,
+      description:    patch.description    !== undefined ? patch.description    : r.description,
+      priority:       (patch.priority as Priority | undefined) ?? r.priority,
+      assignee:       patch.assignee       !== undefined ? patch.assignee       : r.assignee,
+      sapNo:          patch.sap_no         !== undefined ? patch.sap_no         : r.sapNo,
+      dueDate:        patch.due_date       !== undefined ? patch.due_date       : r.dueDate,
+      recommendation: patch.recommendation !== undefined ? patch.recommendation : r.recommendation,
+      editedByName:   actorName,
+      editedAt:       now,
+    });
+    setRows(rs => rs.map(r => (r.id === id ? apply(r) : r)));
+    setDetailWO(d => (d && d.id === id ? apply(d) : d));
   };
 
   const remove = async (id: string, findingId: string | null) => {
@@ -462,7 +495,8 @@ export default function WorkOrders() {
       </div>
 
       {detailWO && (
-        <WODetailModal wo={detailWO} onClose={() => setDetailWO(null)} />
+        <WODetailModal wo={detailWO} canEdit={isAdmin} onSave={saveWorkOrder}
+          onClose={() => setDetailWO(null)} />
       )}
 
       {closingWO && (
@@ -478,7 +512,63 @@ export default function WorkOrders() {
 
 // ── Detail popup — full work order at a glance ────────────────────────────────
 
-function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
+/** Fields an IME admin may correct after the work order exists. */
+interface WOEditDraft {
+  title: string; description: string; priority: Priority;
+  assignee: string; sapNo: string; dueDate: string; recommendation: string;
+}
+
+const draftFromWO = (wo: WORow): WOEditDraft => ({
+  title:          wo.title ?? '',
+  description:    wo.description ?? '',
+  priority:       wo.priority,
+  assignee:       wo.assignee ?? '',
+  sapNo:          wo.sapNo ?? '',
+  dueDate:        wo.dueDate ? wo.dueDate.slice(0, 10) : '',
+  recommendation: wo.recommendation ?? '',
+});
+
+function WODetailModal({ wo, canEdit, onSave, onClose }: {
+  wo: WORow;
+  canEdit: boolean;
+  onSave: (id: string, patch: Record<string, string | null>) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState<WOEditDraft>(() => draftFromWO(wo));
+  const [saving, setSaving]   = useState(false);
+  const [error, setError]     = useState<string | null>(null);
+
+  const inputCls = 'w-full px-2.5 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50';
+
+  function startEdit() { setDraft(draftFromWO(wo)); setError(null); setEditing(true); }
+
+  async function save() {
+    setSaving(true); setError(null);
+    // Send only what changed, and turn a cleared box back into NULL so the field
+    // reads as "—" again rather than storing an empty string.
+    const base = draftFromWO(wo);
+    const map: [keyof WOEditDraft, string][] = [
+      ['title','title'], ['description','description'], ['priority','priority'],
+      ['assignee','assignee'], ['sapNo','sap_no'], ['dueDate','due_date'],
+      ['recommendation','recommendation'],
+    ];
+    const patch: Record<string, string | null> = {};
+    for (const [k, col] of map) {
+      const next = draft[k].trim();
+      if (next !== base[k].trim()) patch[col] = next === '' ? null : next;
+    }
+    if (!Object.keys(patch).length) { setSaving(false); setEditing(false); return; }
+    try {
+      await onSave(wo.id, patch);
+      setEditing(false);
+    } catch (e) {
+      setError((e as Error).message ?? 'Could not save changes.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const rows: [string, React.ReactNode][] = [
     ['CMMS WO #', wo.cmmsWoNo
       ? <>{wo.cmmsWoNo}{wo.cmmsSetByName && <span className="block text-[10px] text-gray-400">entered by {wo.cmmsSetByName}</span>}</>
@@ -512,10 +602,82 @@ function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
             </div>
             <h2 className="text-base font-bold text-gray-900 mt-1.5">{wo.title ?? 'Work order'}</h2>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X size={16} /></button>
+          <div className="flex items-center gap-2 shrink-0">
+            {canEdit && (editing ? (
+              <>
+                <button onClick={() => setEditing(false)} disabled={saving}
+                  className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                  Cancel
+                </button>
+                <button onClick={save} disabled={saving}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold disabled:opacity-60">
+                  {saving ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+              </>
+            ) : (
+              <button onClick={startEdit}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 hover:border-gray-300">
+                <Pencil size={12} /> Edit
+              </button>
+            ))}
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-400"><X size={16} /></button>
+          </div>
         </div>
 
         <div className="p-6 overflow-y-auto space-y-4">
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs font-semibold text-red-700">Could not save</p>
+              <p className="text-[11px] text-red-600 mt-0.5">{error}</p>
+            </div>
+          )}
+
+          {editing ? (
+            <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+              <div className="col-span-2">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">Title</label>
+                <input value={draft.title} disabled={saving} className={inputCls}
+                  onChange={e => setDraft(d => ({ ...d, title: e.target.value }))} />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">Description</label>
+                <textarea value={draft.description} disabled={saving} rows={3} className={inputCls + ' resize-none'}
+                  onChange={e => setDraft(d => ({ ...d, description: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">Priority</label>
+                <select value={draft.priority} disabled={saving} className={inputCls}
+                  onChange={e => setDraft(d => ({ ...d, priority: e.target.value as Priority }))}>
+                  {(['low','medium','high','critical'] as Priority[]).map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">Due date</label>
+                <input type="date" value={draft.dueDate} disabled={saving} className={inputCls}
+                  onChange={e => setDraft(d => ({ ...d, dueDate: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">Assignee</label>
+                <input value={draft.assignee} disabled={saving} className={inputCls} placeholder="e.g. M. Alvarez"
+                  onChange={e => setDraft(d => ({ ...d, assignee: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">SAP No.</label>
+                <input value={draft.sapNo} disabled={saving} className={inputCls}
+                  onChange={e => setDraft(d => ({ ...d, sapNo: e.target.value }))} />
+              </div>
+              <div className="col-span-2">
+                <label className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-0.5 block">Recommendation</label>
+                <textarea value={draft.recommendation} disabled={saving} rows={4} className={inputCls + ' resize-none'}
+                  onChange={e => setDraft(d => ({ ...d, recommendation: e.target.value }))} />
+                <p className="text-[10px] text-gray-400 mt-1">
+                  Copied from the finding when this work order was raised. Editing it here does not change the finding.
+                </p>
+              </div>
+            </div>
+          ) : (
+          <>
           <dl className="grid grid-cols-2 gap-x-6 gap-y-3">
             {rows.map(([label, value]) => (
               <div key={label}>
@@ -533,6 +695,13 @@ function WODetailModal({ wo, onClose }: { wo: WORow; onClose: () => void }) {
               <p className="text-sm text-gray-300 italic">No recommendation recorded</p>
             )}
           </div>
+          {wo.editedByName && (
+            <p className="text-[11px] text-gray-400">
+              Last edited by {wo.editedByName}{wo.editedAt ? ` · ${fmtDate(wo.editedAt)}` : ''}
+            </p>
+          )}
+          </>
+          )}
 
           {wo.status === 'closed' && wo.closeNote && (
             <div>

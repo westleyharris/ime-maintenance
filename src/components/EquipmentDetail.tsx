@@ -1367,7 +1367,6 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
 }) {
   const [step, setStep]         = useState<1 | 2>(1);
   const [note, setNote]         = useState('');
-  const [confirming, setConfirming] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [specs, setSpecs]       = useState<NewAssetSpecs>({
@@ -1389,8 +1388,30 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
   const sp = (k: keyof NewAssetSpecs) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setSpecs(prev => ({ ...prev, [k]: e.target.value }));
 
-  async function confirmReplacement() {
-    setConfirming(true);
+  /**
+   * Step 1 no longer writes anything — it only collects the reason. Everything
+   * is committed by the final confirm, so abandoning the dialog half-way can no
+   * longer leave an asset marked replaced with none of the new asset's details.
+   */
+  function goToNewAssetDetails() {
+    setSaveError(null);
+    setStep(2);
+  }
+
+  /**
+   * The single commit point for a replacement. Order matters:
+   *
+   *  1. snapshot the OUTGOING asset's specs — must happen before anything is
+   *     overwritten, or the timeline records the new asset as the prior one
+   *  2. upload the new photo
+   *  3. write every equipment column in ONE update, so the asset can never be
+   *     left half-replaced (boundary moved but specs stale, or vice versa)
+   *  4. write the timeline event last, once the asset itself is consistent
+   */
+  async function commitReplacement() {
+    setSaving(true);
+    setSaveError(null);
+
     const now = new Date().toISOString();
     const snapshot = {
       image_url:         currentInfo?.image_url,
@@ -1407,77 +1428,53 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
       spec_temperature:  currentInfo?.spec_temperature,
       spec_weight:       currentInfo?.spec_weight,
     };
-    await supabase.from('equipment').update({
-      last_replaced_at: now,
-      status:           'active',
-      status_note:      null,
-    }).eq('id', equipmentId);
-    await supabase.from('equipment_notes').insert({
-      equipment_id: equipmentId,
-      note_type:    'replacement',
-      message:      note || 'Asset replaced',
-      metadata:     { replaced_at: now, prior_specs: snapshot },
-    });
-    setConfirming(false);
-    setStep(2);
-  }
 
-  async function saveNewSpecs() {
-    setSaving(true);
-    setSaveError(null);
-
-    // ── 1. Upload new image first (image_url column always exists) ────────────
-    let imageUrl = currentInfo?.image_url ?? null;
-    if (newImageFile) {
-      const ext  = newImageFile.name.split('.').pop() ?? 'jpg';
-      // Include a timestamp in the path so each replacement gets a unique URL
-      // and the browser never serves a stale cached image.
-      const path = `${equipmentId}_${Date.now()}.${ext}`;
-      const { error: uploadErr } = await supabase.storage
-        .from('equipment-images')
-        .upload(path, newImageFile, { upsert: false });
-      if (uploadErr) {
-        console.error('Image upload failed:', uploadErr);
-      } else {
-        imageUrl = supabase.storage.from('equipment-images').getPublicUrl(path).data.publicUrl;
+    try {
+      // ── 1. New photo (non-fatal: a failed upload must not block the record) ──
+      let imageUrl = currentInfo?.image_url ?? null;
+      if (newImageFile) {
+        const ext  = newImageFile.name.split('.').pop() ?? 'jpg';
+        // Timestamped path so each replacement gets a unique URL and no stale
+        // image is served from cache.
+        const path = `${equipmentId}_${Date.now()}.${ext}`;
+        const { error: uploadErr } = await supabase.storage
+          .from('equipment-images').upload(path, newImageFile, { upsert: false });
+        if (uploadErr) console.error('Image upload failed:', uploadErr);
+        else imageUrl = supabase.storage.from('equipment-images').getPublicUrl(path).data.publicUrl;
       }
+
+      // ── 2. One write for the whole asset ──────────────────────────────────
+      const update: Record<string, string | null> = {
+        last_replaced_at: now,
+        status:           'active',
+        status_note:      null,
+        image_url:        imageUrl,
+      };
+      // Only non-empty specs overwrite; a field left blank keeps whatever the
+      // analyst can still fill in later from the Overview tab.
+      (Object.keys(specs) as (keyof NewAssetSpecs)[]).forEach(k => {
+        if (specs[k].trim()) update[k] = specs[k].trim();
+      });
+
+      const { error: eqErr } = await supabase.from('equipment').update(update).eq('id', equipmentId);
+      if (eqErr) throw new Error(eqErr.message);
+
+      // ── 3. Timeline event, with the outgoing asset's specs attached ───────
+      const { error: noteErr } = await supabase.from('equipment_notes').insert({
+        equipment_id: equipmentId,
+        note_type:    'replacement',
+        message:      note || 'Asset replaced',
+        metadata:     { replaced_at: now, prior_specs: snapshot },
+      });
+      if (noteErr) throw new Error(noteErr.message);
+
+      setSaving(false);
+      await onComplete();
+    } catch (e) {
+      console.error('Replacement failed:', e);
+      setSaveError((e as Error).message ?? 'Could not record the replacement.');
+      setSaving(false);
     }
-
-    // ── 2. Update image_url (always safe, column exists) ─────────────────────
-    if (imageUrl !== currentInfo?.image_url) {
-      const { error: imgErr } = await supabase
-        .from('equipment')
-        .update({ image_url: imageUrl })
-        .eq('id', equipmentId);
-      if (imgErr) console.error('image_url update failed:', imgErr);
-    }
-
-    // ── 3. Update extended spec fields (requires equipment_extended_fields migration) ──
-    const specUpdates: Record<string, string> = {};
-    (Object.keys(specs) as (keyof NewAssetSpecs)[]).forEach(k => {
-      if (specs[k].trim()) specUpdates[k] = specs[k].trim();
-    });
-
-    if (Object.keys(specUpdates).length > 0) {
-      const { error: specErr } = await supabase
-        .from('equipment')
-        .update(specUpdates)
-        .eq('id', equipmentId);
-
-      if (specErr) {
-        console.error('Spec update failed:', specErr);
-        // Most likely cause: extended fields migration not yet run in Supabase
-        setSaveError(
-          `Could not save asset details: ${specErr.message}. ` +
-          `Make sure you have run the "equipment_extended_fields.sql" migration in Supabase SQL Editor.`
-        );
-        setSaving(false);
-        return;
-      }
-    }
-
-    setSaving(false);
-    await onComplete();
   }
 
   function pickImage(file: File) {
@@ -1501,7 +1498,7 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
             </div>
             <div>
               <p className="text-base font-bold text-gray-900">Record Asset Replacement</p>
-              <p className="text-xs text-gray-400 mt-0.5">Step 1 of 2 — Confirm &amp; archive prior asset</p>
+              <p className="text-xs text-gray-400 mt-0.5">Step 1 of 2 — Why is it being replaced?</p>
             </div>
           </div>
           <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-700 space-y-1">
@@ -1530,10 +1527,9 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
               className="flex-1 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors">
               Cancel
             </button>
-            <button onClick={confirmReplacement} disabled={confirming}
-              className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
-              {confirming && <Loader2 size={13} className="animate-spin" />}
-              Confirm &amp; Continue →
+            <button onClick={goToNewAssetDetails}
+              className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-orange-500 text-white hover:bg-orange-600 transition-colors flex items-center justify-center gap-2">
+              Continue →
             </button>
           </div>
         </div>
@@ -1547,7 +1543,7 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
             </div>
             <div>
               <p className="text-base font-bold text-gray-900">New Asset Details</p>
-              <p className="text-xs text-gray-400 mt-0.5">Step 2 of 2 — Enter the replacement asset's information</p>
+              <p className="text-xs text-gray-400 mt-0.5">Step 2 of 2 — Enter the replacement asset's details, then confirm</p>
             </div>
           </div>
 
@@ -1623,19 +1619,25 @@ function ReplaceModal({ equipmentId, currentInfo, onComplete, onCancel }: {
           <div className="p-6 border-t border-gray-100 shrink-0 space-y-3">
             {saveError && (
               <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-xs text-red-700">
-                <p className="font-semibold mb-0.5">Save failed</p>
+                <p className="font-semibold mb-0.5">Could not record the replacement</p>
                 <p>{saveError}</p>
               </div>
             )}
             <div className="flex gap-3">
-              <button onClick={onComplete}
-                className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors">
-                Skip for now
+              {/* Back is safe now that step 1 writes nothing — the reason can be
+                  corrected without abandoning the dialog. */}
+              <button onClick={() => { setSaveError(null); setStep(1); }} disabled={saving}
+                className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+                ← Back
               </button>
-              <button onClick={saveNewSpecs} disabled={saving}
-                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-primary text-white hover:bg-primary-light disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
+              <button onClick={onCancel} disabled={saving}
+                className="px-4 py-2.5 text-sm font-medium rounded-xl border border-gray-200 text-gray-400 hover:text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+                Cancel
+              </button>
+              <button onClick={commitReplacement} disabled={saving}
+                className="flex-1 py-2.5 text-sm font-semibold rounded-xl bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50 transition-colors flex items-center justify-center gap-2">
                 {saving && <Loader2 size={13} className="animate-spin" />}
-                Save New Asset Details
+                {saving ? 'Recording…' : 'Confirm Asset Replacement'}
               </button>
             </div>
           </div>
