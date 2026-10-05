@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import {
   ChevronDown, ChevronRight, Search,
   Building2, Factory, Settings2, Wrench, Upload, Cpu, Loader2,
@@ -237,6 +238,30 @@ export default function Assets() {
   const [importResult, setImportResult] = useState<HierarchyResult | null>(null);
   const [selectedEquipment, setSelectedEquipment] = useState<{ id: string; tag: string } | null>(null);
 
+  // ── Deep link: /assets?equipment=<id>&tag=<tag> ────────────────────────────
+  // The detail view is local state rather than its own route, so other pages
+  // (the Dashboard's Asset Health popup) open it through the URL. Keeping it in
+  // the query string rather than router state means the view survives a refresh
+  // and can be shared.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const id  = searchParams.get('equipment');
+    const tag = searchParams.get('tag');
+    if (id && selectedEquipment?.id !== id) setSelectedEquipment({ id, tag: tag ?? '' });
+    if (!id && selectedEquipment) setSelectedEquipment(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  /** Opening or closing the detail view keeps the URL honest. */
+  const openEquipment = (id: string, tag: string) => {
+    setSelectedEquipment({ id, tag });
+    setSearchParams({ equipment: id, tag }, { replace: false });
+  };
+  const closeEquipment = () => {
+    setSelectedEquipment(null);
+    setSearchParams({}, { replace: false });
+  };
+
   const selectedLocation = locations.find(l => l.id === selectedLocationId);
 
   // ── Fetch asset hierarchy from Supabase ──────────────────────────────────
@@ -348,7 +373,7 @@ export default function Assets() {
       <EquipmentDetail
         equipmentId={selectedEquipment.id}
         equipmentTag={selectedEquipment.tag}
-        onBack={() => setSelectedEquipment(null)}
+        onBack={closeEquipment}
       />
     );
   }
@@ -471,7 +496,7 @@ export default function Assets() {
           ) : (
             <AssetTreeNode
               node={displayTree}
-              onSelectEquipment={(id, tag) => setSelectedEquipment({ id, tag })}
+              onSelectEquipment={openEquipment}
             />
           )}
         </div>

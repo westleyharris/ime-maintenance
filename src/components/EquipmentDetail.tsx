@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X, Pencil, Check, Trash2 } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X, Pencil, Check, Trash2, ExternalLink } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
 import { ALARM_COLUMNS, overrideSummary, withEffectiveAlarm, type AlarmOverride } from '../utils/alarm';
@@ -1981,6 +1982,17 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
   const [notes, setNotes]           = useState<EquipmentNote[]>([]);
   const { profile } = useAuth();
   const canRemoveNotes = profile?.role === 'ime_admin';
+  const navigate = useNavigate();
+
+  /**
+   * The popup only shows Asset Health. Hand the user off to the full asset page
+   * for Overview, Work Orders, KPIs and QR. The detail view is local state on
+   * the Assets page, so it is addressed through the query string.
+   */
+  const openFullView = () => {
+    onClose();
+    navigate(`/assets?equipment=${encodeURIComponent(equipmentId)}&tag=${encodeURIComponent(equipmentTag)}`);
+  };
 
   /** Same removal path as the full asset page, so the two views agree. */
   const handleRemoveNote = async (noteId: string) => {
@@ -2063,9 +2075,16 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
             <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide">Asset Health</p>
             <h2 className="text-base font-bold text-gray-900 mt-0.5 font-mono">{equipmentTag}</h2>
           </div>
-          <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-400">
-            <X size={16} />
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={openFullView}
+              title="Open the full asset page — Overview, Work Orders, KPIs and QR"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:text-primary hover:border-primary/40 hover:bg-blue-50 transition-colors">
+              <ExternalLink size={13} /> Full asset view
+            </button>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 transition-colors text-gray-400">
+              <X size={16} />
+            </button>
+          </div>
         </div>
         <div className="p-6 overflow-y-auto">
           {loading ? (
