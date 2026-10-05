@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Building2, MapPin, Users, Plus, Loader2, X, ChevronRight, Check, Mail, Trash2 } from 'lucide-react';
+import { Building2, MapPin, Users, Plus, Loader2, X, ChevronRight, Check, Mail, Trash2, Pencil } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import AssetPhotoImport from '../components/AssetPhotoImport';
 import { useAuth } from '../context/AuthContext';
@@ -67,6 +67,73 @@ export default function Admin() {
 
   // ── Add Location form ──────────────────────────────────────────────────────
   const [showAddLocation, setShowAddLocation] = useState(false);
+
+  // ── Edit / delete companies and plants ─────────────────────────────────────
+  const [editingCompanyId, setEditingCompanyId] = useState<string | null>(null);
+  const [companyDraft, setCompanyDraft] = useState({ name: '', industry: '', country: '' });
+  const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
+  const [locationDraft, setLocationDraft] = useState('');
+  const [rowBusy, setRowBusy]   = useState<string | null>(null);
+  const [rowError, setRowError] = useState<{ id: string; msg: string } | null>(null);
+
+  function startEditCompany(c: Company) {
+    setRowError(null);
+    setEditingCompanyId(c.id);
+    setCompanyDraft({ name: c.name, industry: c.industry ?? '', country: c.country ?? '' });
+  }
+
+  async function saveCompany(id: string) {
+    const name = companyDraft.name.trim();
+    if (!name) { setRowError({ id, msg: 'Name is required' }); return; }
+    setRowBusy(id); setRowError(null);
+    const { error } = await supabase.from('companies').update({
+      name,
+      industry: companyDraft.industry.trim() || null,
+      country:  companyDraft.country.trim()  || null,
+    }).eq('id', id);
+    setRowBusy(null);
+    if (error) { setRowError({ id, msg: error.message }); return; }
+    setEditingCompanyId(null);
+    await fetchCompanies();
+  }
+
+  async function saveLocation(id: string) {
+    const name = locationDraft.trim();
+    if (!name) { setRowError({ id, msg: 'Name is required' }); return; }
+    setRowBusy(id); setRowError(null);
+    const { error } = await supabase.from('locations').update({ name }).eq('id', id);
+    setRowBusy(null);
+    if (error) { setRowError({ id, msg: error.message }); return; }
+    setEditingLocationId(null);
+    if (selectedCompanyId) await fetchLocations(selectedCompanyId);
+  }
+
+  /**
+   * Deletion is refused by the database unless the record is genuinely empty,
+   * and the rejection names what is holding it — so the error is shown verbatim
+   * rather than reduced to "could not delete".
+   */
+  async function deleteCompany(id: string) {
+    setRowBusy(id); setRowError(null);
+    const { error } = await supabase.rpc('delete_company', { p_company_id: id });
+    setRowBusy(null);
+    if (error) { setRowError({ id, msg: error.message }); return; }
+    if (selectedCompanyId === id) setSelectedCompanyId(null);
+    setConfirmDeleteCompanyId(null);
+    await fetchCompanies();
+  }
+
+  async function deleteLocation(id: string) {
+    setRowBusy(id); setRowError(null);
+    const { error } = await supabase.rpc('delete_location', { p_location_id: id });
+    setRowBusy(null);
+    if (error) { setRowError({ id, msg: error.message }); return; }
+    setConfirmDeleteLocationId(null);
+    if (selectedCompanyId) await fetchLocations(selectedCompanyId);
+  }
+
+  const [confirmDeleteCompanyId, setConfirmDeleteCompanyId]   = useState<string | null>(null);
+  const [confirmDeleteLocationId, setConfirmDeleteLocationId] = useState<string | null>(null);
   const [newLocationName, setNewLocationName] = useState('');
   const [savingLocation, setSavingLocation] = useState(false);
   const [locationError, setLocationError] = useState('');
@@ -101,12 +168,18 @@ export default function Admin() {
   useEffect(() => { fetchCompanies(); }, [fetchCompanies]);
 
   // ── Fetch locations for selected company ───────────────────────────────────
+  const fetchLocations = useCallback(async (companyId: string) => {
+    setLoadingLocations(true);
+    const { data } = await supabase.from('locations')
+      .select('id, name, company_id').eq('company_id', companyId).order('name');
+    setLocations(data ?? []);
+    setLoadingLocations(false);
+  }, []);
+
   useEffect(() => {
     if (!selectedCompanyId) { setLocations([]); return; }
-    setLoadingLocations(true);
-    supabase.from('locations').select('id, name, company_id').eq('company_id', selectedCompanyId).order('name')
-      .then(({ data }) => { setLocations(data ?? []); setLoadingLocations(false); });
-  }, [selectedCompanyId]);
+    fetchLocations(selectedCompanyId);
+  }, [selectedCompanyId, fetchLocations]);
 
   // ── Fetch users + all locations when users tab active ──────────────────────
   useEffect(() => {
@@ -332,20 +405,75 @@ export default function Admin() {
               <p className="text-sm text-gray-400 text-center py-8">No companies yet</p>
             ) : (
               <div className="space-y-1.5">
-                {companies.map(c => (
-                  <button key={c.id} onClick={() => setSelectedCompanyId(selectedCompanyId === c.id ? null : c.id)}
-                    className={`w-full text-left flex items-center justify-between px-4 py-3 rounded-xl border transition-all ${
-                      selectedCompanyId === c.id ? 'border-primary bg-blue-50' : 'border-gray-200 hover:bg-gray-50'
-                    }`}>
-                    <div>
-                      <p className="text-sm font-semibold text-gray-900">{c.name}</p>
-                      {(c.industry || c.country) && (
-                        <p className="text-xs text-gray-400 mt-0.5">{[c.industry, c.country].filter(Boolean).join(' · ')}</p>
+                {companies.map(c => {
+                  const editing = editingCompanyId === c.id;
+                  const busy    = rowBusy === c.id;
+                  const err     = rowError?.id === c.id ? rowError.msg : null;
+                  const rowCls  = 'w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30';
+                  return (
+                    <div key={c.id}
+                      className={`rounded-xl border transition-all ${
+                        selectedCompanyId === c.id ? 'border-primary bg-blue-50' : 'border-gray-200'}`}>
+                      <div className="flex items-center gap-2 px-4 py-3">
+                        {editing ? (
+                          <div className="flex-1 space-y-2">
+                            <input value={companyDraft.name} disabled={busy} placeholder="Company name *" className={rowCls}
+                              onChange={e => setCompanyDraft(d => ({ ...d, name: e.target.value }))} />
+                            <div className="grid grid-cols-2 gap-2">
+                              <input value={companyDraft.industry} disabled={busy} placeholder="Industry" className={rowCls}
+                                onChange={e => setCompanyDraft(d => ({ ...d, industry: e.target.value }))} />
+                              <input value={companyDraft.country} disabled={busy} placeholder="Country" className={rowCls}
+                                onChange={e => setCompanyDraft(d => ({ ...d, country: e.target.value }))} />
+                            </div>
+                            <div className="flex gap-2">
+                              <button onClick={() => saveCompany(c.id)} disabled={busy}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold disabled:opacity-60">
+                                {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+                              </button>
+                              <button onClick={() => { setEditingCompanyId(null); setRowError(null); }} disabled={busy}
+                                className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50">
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <button onClick={() => setSelectedCompanyId(selectedCompanyId === c.id ? null : c.id)}
+                              className="flex-1 text-left min-w-0">
+                              <p className="text-sm font-semibold text-gray-900 truncate">{c.name}</p>
+                              {(c.industry || c.country) && (
+                                <p className="text-xs text-gray-400 mt-0.5">{[c.industry, c.country].filter(Boolean).join(' · ')}</p>
+                              )}
+                            </button>
+                            {confirmDeleteCompanyId === c.id ? (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button onClick={() => deleteCompany(c.id)} disabled={busy}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-red-600 text-white text-[11px] font-semibold disabled:opacity-60">
+                                  {busy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Delete
+                                </button>
+                                <button onClick={() => { setConfirmDeleteCompanyId(null); setRowError(null); }} disabled={busy}
+                                  className="px-2 py-1 rounded-lg border border-gray-200 text-[11px] font-semibold text-gray-500 hover:bg-gray-50">
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <button onClick={() => startEditCompany(c)} title="Edit company"
+                                  className="p-1.5 rounded-lg text-gray-300 hover:text-primary hover:bg-blue-50"><Pencil size={13} /></button>
+                                <button onClick={() => { setConfirmDeleteCompanyId(c.id); setRowError(null); }} title="Delete company"
+                                  className="p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50"><Trash2 size={13} /></button>
+                                <ChevronRight size={14} className={`text-gray-300 transition-transform ${selectedCompanyId === c.id ? 'rotate-90' : ''}`} />
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      {err && (
+                        <p className="px-4 pb-3 -mt-1 text-[11px] text-red-600 leading-snug">{err}</p>
                       )}
                     </div>
-                    <ChevronRight size={14} className={`text-gray-300 transition-transform ${selectedCompanyId === c.id ? 'rotate-90' : ''}`} />
-                  </button>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -394,12 +522,60 @@ export default function Admin() {
               <p className="text-sm text-gray-400 text-center py-8">No locations yet — add one above</p>
             ) : (
               <div className="space-y-1.5">
-                {locations.map(l => (
-                  <div key={l.id} className="flex items-center gap-3 px-4 py-3 rounded-xl border border-gray-200">
-                    <MapPin size={14} className="text-gray-300 shrink-0" />
-                    <p className="text-sm font-medium text-gray-800">{l.name}</p>
-                  </div>
-                ))}
+                {locations.map(l => {
+                  const editing = editingLocationId === l.id;
+                  const busy    = rowBusy === l.id;
+                  const err     = rowError?.id === l.id ? rowError.msg : null;
+                  return (
+                    <div key={l.id} className="rounded-xl border border-gray-200">
+                      <div className="flex items-center gap-3 px-4 py-3">
+                        <MapPin size={14} className="text-gray-300 shrink-0" />
+                        {editing ? (
+                          <>
+                            <input value={locationDraft} disabled={busy} autoFocus
+                              onChange={e => setLocationDraft(e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') saveLocation(l.id); }}
+                              className="flex-1 px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30" />
+                            <button onClick={() => saveLocation(l.id)} disabled={busy}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-white text-xs font-semibold disabled:opacity-60 shrink-0">
+                              {busy ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />} Save
+                            </button>
+                            <button onClick={() => { setEditingLocationId(null); setRowError(null); }} disabled={busy}
+                              className="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-semibold text-gray-500 hover:bg-gray-50 shrink-0">
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <p className="text-sm font-medium text-gray-800 flex-1 truncate">{l.name}</p>
+                            {confirmDeleteLocationId === l.id ? (
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button onClick={() => deleteLocation(l.id)} disabled={busy}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-red-600 text-white text-[11px] font-semibold disabled:opacity-60">
+                                  {busy ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />} Delete
+                                </button>
+                                <button onClick={() => { setConfirmDeleteLocationId(null); setRowError(null); }} disabled={busy}
+                                  className="px-2 py-1 rounded-lg border border-gray-200 text-[11px] font-semibold text-gray-500 hover:bg-gray-50">
+                                  Cancel
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <button onClick={() => { setEditingLocationId(l.id); setLocationDraft(l.name); setRowError(null); }}
+                                  title="Rename plant"
+                                  className="p-1.5 rounded-lg text-gray-300 hover:text-primary hover:bg-blue-50"><Pencil size={13} /></button>
+                                <button onClick={() => { setConfirmDeleteLocationId(l.id); setRowError(null); }}
+                                  title="Delete plant"
+                                  className="p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50"><Trash2 size={13} /></button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                      {err && <p className="px-4 pb-3 -mt-1 text-[11px] text-red-600 leading-snug">{err}</p>}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
