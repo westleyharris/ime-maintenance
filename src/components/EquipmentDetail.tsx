@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X, Pencil, Check } from 'lucide-react';
+import { ArrowLeft, QrCode, ClipboardList, Loader2, Wrench, ImagePlus, CheckCircle2, AlertCircle, ChevronDown, X, Pencil, Check, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../context/AuthContext';
@@ -415,10 +415,12 @@ type HealthTimelineEntry =
   | { kind: 'measurement'; date: string } & DateBucket
   | { kind: 'activity'; date: string; noteType: string; message: string | null; id: string; metadata: Record<string, unknown> | null };
 
-function AssetHealthTab({ components, notes, info }: {
+function AssetHealthTab({ components, notes, info, canRemove, onRemoveNote }: {
   components: ComponentData[];
   notes: EquipmentNote[];
   info: EquipmentInfo | null;
+  canRemove: boolean;
+  onRemoveNote: (noteId: string) => Promise<void>;
 }) {
   // Build per-date buckets with full component/point detail
   const byDate = new Map<string, DateBucket>();
@@ -469,6 +471,11 @@ function AssetHealthTab({ components, notes, info }: {
   ].sort((a, b) => b.date.localeCompare(a.date));
 
   const noData = allMeas.length === 0 && notes.length === 0;
+
+  // Two-step removal: the first click arms, the second confirms. A timeline
+  // event is a record of work done, so it should not vanish on a stray click.
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [removingId, setRemovingId]     = useState<string | null>(null);
 
   // Infinite scroll state
   const INITIAL_COUNT = 6;
@@ -577,6 +584,36 @@ function AssetHealthTab({ components, notes, info }: {
                       <div className={`relative z-10 w-5 h-5 mt-0.5 rounded-full shrink-0 ring-4 ring-[#eef2f7] ${archived ? 'bg-gray-400' : dotColor(entry.worstLevel)}`} />
                     ) : (
                       <div className={`relative z-10 w-5 h-5 mt-0.5 rounded-sm shrink-0 ring-4 ring-[#eef2f7] bg-white border-2 ${entry.noteType === 'recommendation' ? 'border-primary' : 'border-gray-400'}`} />
+                    )}
+
+                    {/* Remove — activity events only. Measurements are left alone:
+                        the UAS sync would recreate them on its next run. */}
+                    {canRemove && entry.kind === 'activity' && (
+                      <div className="order-last shrink-0 flex items-center gap-1.5 pt-1">
+                        {confirmingId === entry.id ? (
+                          <>
+                            <button onClick={async () => {
+                                setRemovingId(entry.id);
+                                try { await onRemoveNote(entry.id); } finally { setRemovingId(null); setConfirmingId(null); }
+                              }}
+                              disabled={removingId === entry.id}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-red-600 text-white text-[11px] font-semibold disabled:opacity-60">
+                              {removingId === entry.id ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                              Remove
+                            </button>
+                            <button onClick={() => setConfirmingId(null)} disabled={removingId === entry.id}
+                              className="px-2 py-1 rounded-lg border border-gray-200 text-[11px] font-semibold text-gray-500 hover:bg-gray-50">
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button onClick={() => setConfirmingId(entry.id)}
+                            title="Remove this event from the timeline"
+                            className="p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            <Trash2 size={14} />
+                          </button>
+                        )}
+                      </div>
                     )}
 
                     {/* Text */}
@@ -1624,6 +1661,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
     const { data } = await supabase
       .from('equipment_notes')
       .select('id, note_type, message, metadata, created_at, actor_id, actor_name')
+          .is('deleted_at', null)
       .eq('equipment_id', equipmentId)
       .order('created_at', { ascending: false });
     setNotes((data ?? []) as EquipmentNote[]);
@@ -1660,6 +1698,18 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
   // analysts may change them. RLS still lets a company_admin PATCH the row
   // directly — see the note in the PR/handover about enforcing this in the DB.
   const canEditDetails = profile?.role === 'ime_admin';
+
+
+  /**
+   * Soft-removes a timeline event. The RPC enforces ime_admin and stamps who
+   * removed it; dropping the row locally keeps the timeline responsive without
+   * a refetch.
+   */
+  const handleRemoveNote = async (noteId: string) => {
+    const { error } = await supabase.rpc('delete_equipment_note', { p_note_id: noteId });
+    if (error) throw new Error(error.message);
+    setNotes(ns => ns.filter(n => n.id !== noteId));
+  };
 
   /** Persist an Overview edit and reflect it locally without a refetch. */
   const handleSaveDetails = async (patch: Record<string, string | null>) => {
@@ -1763,6 +1813,7 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
         supabase
           .from('equipment_notes')
           .select('id, note_type, message, metadata, created_at, actor_id, actor_name')
+          .is('deleted_at', null)
           .eq('equipment_id', equipmentId)
           .order('created_at', { ascending: false })
           .then(({ data }) => setNotes((data ?? []) as EquipmentNote[]));
@@ -1902,7 +1953,8 @@ export default function EquipmentDetail({ equipmentId, equipmentTag, onBack }: P
             </div>
           )}
           {activeTab === 'asset-health' && (
-            <AssetHealthTab components={components} notes={notes} info={info} />
+            <AssetHealthTab components={components} notes={notes} info={info}
+              canRemove={canEditDetails} onRemoveNote={handleRemoveNote} />
           )}
           {activeTab === 'workorders'   && <WorkOrdersTab equipmentId={equipmentId} />}
           {activeTab === 'kpis' && (
@@ -1925,6 +1977,15 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
   const [info, setInfo]             = useState<EquipmentInfo | null>(null);
   const [components, setComponents] = useState<ComponentData[]>([]);
   const [notes, setNotes]           = useState<EquipmentNote[]>([]);
+  const { profile } = useAuth();
+  const canRemoveNotes = profile?.role === 'ime_admin';
+
+  /** Same removal path as the full asset page, so the two views agree. */
+  const handleRemoveNote = async (noteId: string) => {
+    const { error } = await supabase.rpc('delete_equipment_note', { p_note_id: noteId });
+    if (error) throw new Error(error.message);
+    setNotes(ns => ns.filter(n => n.id !== noteId));
+  };
   const [loading, setLoading]       = useState(true);
 
   useEffect(() => {
@@ -1972,6 +2033,7 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
         const notesRes = await supabase
           .from('equipment_notes')
           .select('id, note_type, message, metadata, created_at, actor_id, actor_name')
+          .is('deleted_at', null)
           .eq('equipment_id', equipmentId)
           .order('created_at', { ascending: false });
 
@@ -2007,7 +2069,8 @@ export function AssetHealthModal({ equipmentId, equipmentTag, onClose }: {
           {loading ? (
             <div className="flex justify-center py-20"><Loader2 size={24} className="animate-spin text-gray-300" /></div>
           ) : (
-            <AssetHealthTab components={components} notes={notes} info={info} />
+            <AssetHealthTab components={components} notes={notes} info={info}
+              canRemove={canRemoveNotes} onRemoveNote={handleRemoveNote} />
           )}
         </div>
       </div>
